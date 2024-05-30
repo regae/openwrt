@@ -1,0 +1,46 @@
+--- a/ecm_interface.c
++++ b/ecm_interface.c
+@@ -7937,7 +7937,7 @@ static int ecm_interface_neigh_mac_update_notify_event(struct notifier_block *nb,
+ {
+ 	struct neigh_mac_update *nmu = (struct neigh_mac_update *)data;
+ 
+-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
+ 	/*
+ 	 * We handle only mac addr 'update' event and ignore add/delete
+ 	 * Below enum is defined only in 5.4 kernel
+@@ -8104,7 +8104,7 @@ static int ecm_interface_wifi_event_rx(struct socket *sock, struct sockaddr_nl *addr, unsigned char *buf, int len)
+ {
+ 	struct msghdr msg;
+ 	struct iovec  iov;
+-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
+ 	mm_segment_t oldfs = get_fs();
+ #endif
+ 	int size;
+@@ -8117,12 +8117,12 @@ static int ecm_interface_wifi_event_rx(struct socket *sock, struct sockaddr_nl *addr, unsigned char *buf, int len)
+ 	msg.msg_namelen = sizeof(struct sockaddr_nl);
+ 	msg.msg_control = NULL;
+ 	msg.msg_controllen = 0;
+-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
+ 	set_fs(KERNEL_DS);
+ #endif
+ 	iov_iter_init(&msg.msg_iter, READ, &iov, 1, len);
+ 	size = sock_recvmsg(sock, &msg, msg.msg_flags);
+-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
+ 	set_fs(oldfs);
+ #endif
+ 
+--- a/ecm_types.h
++++ b/ecm_types.h
+@@ -464,7 +464,7 @@ static inline bool ecm_string_to_ip_addr(ip_addr_t addr, char *ip_str)
+ static inline bool ecm_debugfs_create_u32(const char *name, umode_t mode,
+ 					  struct dentry *parent, u32 *value)
+ {
+-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
+ 	struct dentry *d = debugfs_create_u32(name, mode, parent, value);
+ 	if (!d) {
+ 		return false;
