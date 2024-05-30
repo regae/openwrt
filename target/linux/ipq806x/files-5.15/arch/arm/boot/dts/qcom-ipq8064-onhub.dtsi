@@ -288,6 +288,10 @@
 	};
 };
 
+&adm_dma {
+       status = "okay";
+};
+
 &gmac0 {
 	status = "okay";
 	phy-mode = "rgmii";
@@ -356,6 +360,12 @@
 
 		cs-gpios = <&qcom_pinmux 20 0>;
 
+		dmas = <&adm_dma 6>,
+			<&adm_dma 5>;
+		dma-names = "rx", "tx";
+		qcom,rx-crci = <9>;
+		qcom,tx-crci = <10>;
+
 		flash: flash@0 {
 			compatible = "jedec,spi-nor";
 			spi-max-frequency = <50000000>;
@@ -378,9 +388,11 @@
 
 	cs-gpios = <&qcom_pinmux 57 GPIO_ACTIVE_HIGH>;
 
-	dmas = <&adm_dma 8 0xb>,
-	       <&adm_dma 7 0x14>;
+	dmas = <&adm_dma 8>,
+	       <&adm_dma 7>;
 	dma-names = "rx", "tx";
+	qcom,rx-crci = <11>;
+	qcom,tx-crci = <20>;
 
 	/*
 	 * This "spidev" was included in the manufacturer device tree. I suspect
@@ -407,7 +419,7 @@
 		ath10k@0,0 {
 			reg = <0 0 0 0 0>;
 			device_type = "pci";
-			qcom,ath10k-sa-gpio = <2 3 4 0>;
+			qcom,ath10k-sa-gpio-pin = <2 3 4 0>;
 			qcom,ath10k-sa-gpio-func = <5 5 5 0>;
 		};
 	};
@@ -426,7 +438,7 @@
 		ath10k@0,0 {
 			reg = <0 0 0 0 0>;
 			device_type = "pci";
-			qcom,ath10k-sa-gpio = <2 3 4 0>;
+			qcom,ath10k-sa-gpio-pin = <2 3 4 0>;
 			qcom,ath10k-sa-gpio-func = <5 5 5 0>;
 		};
 	};
