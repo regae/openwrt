@@ -116,10 +116,6 @@ enable_rps() {
 start() {
   local enable_rps
 
-  # test regae
-  # lsmod | grep -q nft_flow_offload && rmmod nft_flow_offload
-  [ -d "/sys/module/nft_flow_offload" ] && rmmod nft_flow_offload
-
   config_load     nss
   config_get      enable_rps "general" enable_rps 1
   config_get_bool enable_log "general" enable_log 1
