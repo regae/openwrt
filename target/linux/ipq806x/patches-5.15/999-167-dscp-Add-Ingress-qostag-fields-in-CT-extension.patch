@@ -1,0 +1,25 @@
+From 65042f91049d40950b5f08586bc9085d3143e46f Mon Sep 17 00:00:00 2001
+From: Pavithra R <pavir@codeaurora.org>
+Date: Mon, 27 May 2019 12:40:07 +0530
+Subject: [PATCH] [dscp] Add Ingress qostag fields in CT extension.
+
+Extend DSCP remark extension structure to accomodate
+ingress qostag fields.
+
+Change-Id: Ie29ea43632a7bbfc05d9b749cbd15f00c2753861
+Signed-off-by: Pavithra R <pavir@codeaurora.org>
+---
+ include/net/netfilter/nf_conntrack_dscpremark_ext.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+--- a/include/net/netfilter/nf_conntrack_dscpremark_ext.h
++++ b/include/net/netfilter/nf_conntrack_dscpremark_ext.h
+@@ -34,6 +34,8 @@
+ struct nf_ct_dscpremark_ext {
+ 	__u32 flow_priority;	/* Original direction packet priority */
+ 	__u32 reply_priority;	/* Reply direction packet priority */
++	__u16 igs_flow_qos_tag;	/* Original direction ingress packet priority */
++	__u16 igs_reply_qos_tag;	/* Reply direction ingress packet priority */
+ 	__u8 flow_dscp;		/* IP DSCP value for original direction */
+ 	__u8 reply_dscp;	/* IP DSCP value for reply direction */
+ 	__u16 rule_flags;	/* Rule Validity flags */

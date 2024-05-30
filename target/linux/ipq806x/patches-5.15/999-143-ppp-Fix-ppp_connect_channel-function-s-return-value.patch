@@ -1,0 +1,46 @@
+From 91a951972d1a3f13f13a560bb003d720f9a7c9e4 Mon Sep 17 00:00:00 2001
+From: Murat Sezgin <msezgin@codeaurora.org>
+Date: Thu, 20 Aug 2020 10:01:08 -0700
+Subject: [PATCH] ppp: Fix ppp_connect_channel function's return value
+
+The function should return 0 after all the successful
+checks. The patch fixes failed PPPoE connections.
+
+Signed-off-by: Murat Sezgin <msezgin@codeaurora.org>
+Change-Id: I6c4755b0b158ca9bd75403e01cb3c0dda193e9e0
+---
+ drivers/net/ppp/ppp_generic.c | 7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+--- a/drivers/net/ppp/ppp_generic.c
++++ b/drivers/net/ppp/ppp_generic.c
+@@ -3544,20 +3544,16 @@ ppp_connect_channel(struct channel *pch,
+ 		switch (version) {
+ 		case 2:
+ 			ppp->dev->priv_flags_ext |= IFF_EXT_PPP_L2TPV2;
+-			ret = 0;
+ 			break;
+ 		case 3:
+ 			ppp->dev->priv_flags_ext |= IFF_EXT_PPP_L2TPV3;
+-			ret = 0;
+-			break;
+-		default:
+ 			break;
+ 		}
++
+ 		break;
+ 
+ 	case PX_PROTO_PPTP:
+ 		ppp->dev->priv_flags_ext |= IFF_EXT_PPP_PPTP;
+-		ret = 0;
+ 		break;
+ 
+ 	default:
+@@ -3567,6 +3563,7 @@ ppp_connect_channel(struct channel *pch,
+ 	notify = 1;
+ 
+ 	ppp_unlock(ppp);
++	ret = 0;
+ 
+  outl:
+ 	write_unlock_bh(&pch->upl);

@@ -1,0 +1,80 @@
+From 63f94df730bb9459fb3ed0545a0bb7d401c1cecc Mon Sep 17 00:00:00 2001
+From: Murat Sezgin <msezgin@codeaurora.org>
+Date: Tue, 29 Mar 2016 20:43:18 -0700
+Subject: [PATCH] net: bridge: Added bridge fdb update notify chain
+
+Registered modules are notified based on two events:
+1. Dst port changes for any existing bridge fdb entry
+2. Bridge fdb entry ages out/deleted
+
+Change-Id: Iaba8fba6859bcc8e638df4f2e9900c131b1a6d34
+Signed-off-by: ratheesh kannoth <rkannoth@codeaurora.org>
+Signed-off-by: Murat Sezgin <msezgin@codeaurora.org>
+---
+ include/linux/if_bridge.h |  2 ++
+ net/bridge/br_fdb.c       | 23 ++++++++++++++++++++++-
+ 2 files changed, 24 insertions(+), 1 deletion(-)
+
+--- a/include/linux/if_bridge.h
++++ b/include/linux/if_bridge.h
+@@ -76,6 +76,8 @@ extern void br_dev_update_stats(struct n
+ extern struct net_bridge_fdb_entry *br_fdb_has_entry(struct net_device *dev,
+ 						     const char *addr,
+ 						     __u16 vid);
++extern void br_fdb_update_register_notify(struct notifier_block *nb);
++extern void br_fdb_update_unregister_notify(struct notifier_block *nb);
+ 
+ #if IS_ENABLED(CONFIG_BRIDGE) && IS_ENABLED(CONFIG_BRIDGE_IGMP_SNOOPING)
+ int br_multicast_list_adjacent(struct net_device *dev,
+--- a/net/bridge/br_fdb.c
++++ b/net/bridge/br_fdb.c
+@@ -334,6 +334,20 @@ out:
+ 	spin_unlock_bh(&br->hash_lock);
+ }
+ 
++ATOMIC_NOTIFIER_HEAD(br_fdb_update_notifier_list);
++
++void br_fdb_update_register_notify(struct notifier_block *nb)
++{
++	atomic_notifier_chain_register(&br_fdb_update_notifier_list, nb);
++}
++EXPORT_SYMBOL_GPL(br_fdb_update_register_notify);
++
++void br_fdb_update_unregister_notify(struct notifier_block *nb)
++{
++	atomic_notifier_chain_unregister(&br_fdb_update_notifier_list, nb);
++}
++EXPORT_SYMBOL_GPL(br_fdb_update_unregister_notify);
++
+ void br_fdb_cleanup(struct work_struct *work)
+ {
+ 	struct net_bridge *br = container_of(work, struct net_bridge,
+@@ -368,8 +382,11 @@ void br_fdb_cleanup(struct work_struct *
+ 			work_delay = min(work_delay, this_timer - now);
+ 		} else {
+ 			spin_lock_bh(&br->hash_lock);
+-			if (!hlist_unhashed(&f->fdb_node))
++			if (!hlist_unhashed(&f->fdb_node)) {
++			    atomic_notifier_call_chain(&br_fdb_update_notifier_list, 0,
++						       (void *)f->key.addr.addr);
+ 				fdb_delete(br, f, true);
++			}
+ 			spin_unlock_bh(&br->hash_lock);
+ 		}
+ 	}
+@@ -610,11 +627,15 @@ void br_fdb_update(struct net_bridge *br
+ 				br_switchdev_fdb_notify(br, fdb, RTM_DELNEIGH);
+ 				WRITE_ONCE(fdb->dst, source);
+ 				fdb_modified = true;
++
+ 				/* Take over HW learned entry */
+ 				if (unlikely(test_bit(BR_FDB_ADDED_BY_EXT_LEARN,
+ 						      &fdb->flags)))
+ 					clear_bit(BR_FDB_ADDED_BY_EXT_LEARN,
+ 						  &fdb->flags);
++
++				atomic_notifier_call_chain(
++					&br_fdb_update_notifier_list, 0, addr);
+ 			}
+ 
+ 			if (unlikely(test_bit(BR_FDB_ADDED_BY_USER, &flags)))

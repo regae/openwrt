@@ -1,0 +1,60 @@
+From 92f96b6ef80870fbc3819261e91183719a324095 Mon Sep 17 00:00:00 2001
+From: Ram Chandra Jangir <rjangir@codeaurora.org>
+Date: Fri, 19 Feb 2021 19:14:40 +0530
+Subject: [PATCH] arch: qcom: Add a new kconfig to use different DDR profiles
+
+This change adds a new config IPQ_MEM_PROFILE which can be used
+to select different DDR profiles for different DDR size,
+i.e 256MB, 512MB etc.
+It also adds SKB_FIXED_SIZE_2K config which can be used to fix
+'skbuf' size to 2KB.
+
+Change-Id: I9addd2cf4634765bf4f92ca8f38615205e302db3
+Signed-off-by: Ram Chandra Jangir <rjangir@codeaurora.org>
+---
+ arch/arm/mach-qcom/Kconfig | 18 ++++++++++++++++++
+ scripts/Makefile.lib       |  8 ++++++++
+ 2 files changed, 26 insertions(+)
+
+--- a/arch/arm/mach-qcom/Kconfig
++++ b/arch/arm/mach-qcom/Kconfig
+@@ -33,4 +33,22 @@ config ARCH_MDM9615
+ 	bool "Enable support for MDM9615"
+ 	select CLKSRC_QCOM
+ 
++config IPQ_MEM_PROFILE
++	int "Select Memory Profile"
++	range 0 1024
++	default 0
++	help
++	This option select memory profile to be used, which defines
++	the reserved memory configuration used in device tree.
++
++	If unsure, say 0
++
++config SKB_FIXED_SIZE_2K
++	bool "SKB size fixed at 2K"
++	default n
++	help
++		This is a hint to the NSS driver that the ‘skbuff’ size might
++		need to be fixed at 2KB, to conserve memory.
++
++
+ endif
+--- a/scripts/Makefile.lib
++++ b/scripts/Makefile.lib
+@@ -232,6 +232,14 @@ ifeq ($(CONFIG_LTO_CLANG),y)
+ mod-prelink-ext := .lto
+ endif
+ 
++#Add DDR profiling for different DDR size in dtsi
++ifeq ($(CONFIG_IPQ_MEM_PROFILE),256)
++dtc_cpp_flags += -D __IPQ_MEM_PROFILE_256_MB__
++else ifeq ($(CONFIG_IPQ_FLASH_16M_PROFILE),y)
++dtc_cpp_flags += -D __IPQ_MEM_PROFILE_256_MB__
++else ifeq ($(CONFIG_IPQ_MEM_PROFILE),512)
++dtc_cpp_flags += -D __IPQ_MEM_PROFILE_512_MB__
++endif
+ # Useful for describing the dependency of composite objects
+ # Usage:
+ #   $(call multi_depend, multi_used_targets, suffix_to_remove, suffix_to_add)

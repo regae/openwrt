@@ -1,0 +1,228 @@
+From 48cd80f68c351a01447f9c22d3a8381159f67581 Mon Sep 17 00:00:00 2001
+From: Tian Yang <tiany@codeaurora.org>
+Date: Tue, 29 Dec 2015 14:04:41 -0600
+Subject: [PATCH] skbuff_debug: track alloc and free complete stacks
+
+This adds support to record a complete stack trace for all
+alloc's and free's of SKBs.
+
+Change-Id: I81fc76240d49d18035e99c234abcb8e4b9cb14a5
+Signed-off-by: Matthew McClintock <mmcclint@codeaurora.org>
+Signed-off-by: Casey Chen <kexinc@codeaurora.org>
+---
+ include/linux/skbuff.h  |   4 +-
+ net/core/skbuff_debug.c | 139 ++++++++++++++++++++++++----------------
+ 2 files changed, 88 insertions(+), 55 deletions(-)
+
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -987,7 +987,9 @@ struct sk_buff {
+ #endif
+ 
+ #ifdef CONFIG_DEBUG_OBJECTS_SKBUFF
+-	void			*free_addr;
++#define DEBUG_OBJECTS_SKBUFF_STACKSIZE	20
++	void			*free_addr[DEBUG_OBJECTS_SKBUFF_STACKSIZE];
++	void			*alloc_addr[DEBUG_OBJECTS_SKBUFF_STACKSIZE];
+ #endif
+ };
+ 
+--- a/net/core/skbuff_debug.c
++++ b/net/core/skbuff_debug.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2015, The Linux Foundation. All rights reserved.
++ * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+  *
+  * Permission to use, copy, modify, and/or distribute this software for any
+  * purpose with or without fee is hereby granted, provided that the above
+@@ -15,12 +15,77 @@
+  */
+ 
+ #include <asm/stacktrace.h>
++#include <asm/current.h>
++#include <linux/sched.h>
+ #include <linux/module.h>
+ 
+ #include "skbuff_debug.h"
+ 
+ static int skbuff_debugobj_enabled __read_mostly = 1;
+ 
++struct skbuff_debugobj_walking {
++	int pos;
++	void **d;
++};
++
++static int skbuff_debugobj_walkstack(struct stackframe *frame, void *p)
++{
++	struct skbuff_debugobj_walking *w = (struct skbuff_debugobj_walking *)p;
++	u32 pc = frame->pc;
++
++	if (w->pos < DEBUG_OBJECTS_SKBUFF_STACKSIZE - 1) {
++		w->d[w->pos++] = (void *)pc;
++		return 0;
++	}
++
++	return -ENOENT;
++}
++
++#ifdef CONFIG_ARM
++static void skbuff_debugobj_get_stack(void **ret)
++{
++	struct stackframe frame;
++
++	register unsigned long current_sp asm ("sp");
++	struct skbuff_debugobj_walking w = {0, ret};
++	void *p = &w;
++
++	frame.fp = (unsigned long)__builtin_frame_address(0);
++	frame.sp = current_sp;
++	frame.lr = (unsigned long)__builtin_return_address(0);
++	frame.pc = (unsigned long)skbuff_debugobj_get_stack;
++
++	walk_stackframe(&frame, skbuff_debugobj_walkstack, p);
++
++	ret[w.pos] = NULL;
++}
++#else
++#error
++static void skbuff_debugobj_get_stack(void **ret)
++{
++	/* not supported */
++	ret[0] = 0xdeadbeef;
++}
++#endif
++
++void skbuff_debugobj_print_stack(void **stack)
++{
++	int i;
++
++	for (i = 0; stack[i]; i++)
++		pr_emerg("\t %pS (0x%p)\n", stack[i], stack[i]);
++}
++
++void skbuff_debugobj_print_skb(struct sk_buff *skb)
++{
++	pr_emerg("skb_debug: current process = %s (pid %i)\n",
++		 current->comm, current->pid);
++	pr_emerg("skbuff_debug: free stack:\n");
++	skbuff_debugobj_print_stack(skb->free_addr);
++	pr_emerg("skbuff_debug: alloc stack:\n");
++	skbuff_debugobj_print_stack(skb->alloc_addr);
++}
++
+ /* skbuff_debugobj_fixup():
+  *	Called when an error is detected in the state machine for
+  *	the objects
+@@ -33,8 +98,10 @@ static int skbuff_debugobj_fixup(void *a
+ {
+ 	struct sk_buff *skb = (struct sk_buff *)addr;
+ 	ftrace_dump(DUMP_ALL);
+-        WARN(1, "skbuff_debug: state = %d, skb = 0x%p last free = %pS\n",
+-             state, skb, skb->free_addr);
++	WARN(1, "skbuff_debug: state = %d, skb = 0x%p\n",
++	     state, skb);
++	skbuff_debugobj_print_skb(skb);
++
+ #ifdef CONFIG_ARM64
+ 	return true;
+ #else
+@@ -52,18 +119,23 @@ static struct debug_obj_descr skbuff_deb
+ 
+ inline void skbuff_debugobj_activate(struct sk_buff *skb)
+ {
+-	int ret;
++	int ret = 0;
+ 
+ 	if (!skbuff_debugobj_enabled)
+ 		return;
+ 
++	skbuff_debugobj_get_stack(skb->alloc_addr);
+ 	ret = debug_object_activate(skb, &skbuff_debug_descr);
++	if (ret)
++		goto err_act;
+ 
+-	if (ret) {
+-		ftrace_dump(DUMP_ALL);
+-		WARN(1, "skb_debug: failed to activate err = %d skb = 0x%p last free=%pS\n",
+-		     ret, skb, skb->free_addr);
+-	}
++	return;
++
++err_act:
++	ftrace_dump(DUMP_ALL);
++	WARN(1, "skb_debug: failed to activate err = %d skb = 0x%p\n",
++	     ret, skb);
++	skbuff_debugobj_print_skb(skb);
+ }
+ 
+ inline void skbuff_debugobj_init_and_activate(struct sk_buff *skb)
+@@ -75,48 +147,6 @@ inline void skbuff_debugobj_init_and_act
+ 	skbuff_debugobj_activate(skb);
+ }
+ 
+-static int skbuff_debugobj_walkstack(struct stackframe *frame, void *d)
+-{
+-	u32 *pc = d;
+-
+-	*pc = frame->pc;
+-
+-	/* walk to outside kernel address space (e.g. module)
+-	 * for the time being, need a whitelist here in the
+-	 * future most likely
+-	 */
+-	if (is_module_text_address(*pc))
+-		return -1;
+-
+-	return 0;
+-}
+-
+-#ifdef CONFIG_ARM
+-static void *skbuff_debugobj_get_free_addr(void)
+-{
+-	struct stackframe frame;
+-
+-	register unsigned long current_sp asm ("sp");
+-	void *ret = NULL;
+-
+-	frame.fp = (unsigned long)__builtin_frame_address(0);
+-	frame.sp = current_sp;
+-	frame.lr = (unsigned long)__builtin_return_address(0);
+-	frame.pc = (unsigned long)skbuff_debugobj_get_free_addr;
+-
+-	walk_stackframe(&frame, skbuff_debugobj_walkstack, &ret);
+-
+-	return ret;
+-}
+-#else
+-#error
+-static void *skbuff_debugobj_get_free_addr(void)
+-{
+-	/* not supported */
+-	return 0xdeadbeef;
+-}
+-#endif
+-
+ inline void skbuff_debugobj_deactivate(struct sk_buff *skb)
+ {
+ 	int obj_state;
+@@ -126,15 +156,16 @@ inline void skbuff_debugobj_deactivate(s
+ 
+ 	obj_state = debug_object_get_state(skb);
+ 
++	skbuff_debugobj_get_stack(skb->free_addr);
+ 	if (obj_state == ODEBUG_STATE_ACTIVE) {
+ 		debug_object_deactivate(skb, &skbuff_debug_descr);
+-		skb->free_addr = skbuff_debugobj_get_free_addr();
+ 		return;
+ 	}
+ 
+ 	ftrace_dump(DUMP_ALL);
+-	WARN(1, "skbuff_debug: deactivating inactive object skb=0x%p state=%d last free=%pS\n",
+-	     skb, obj_state, skb->free_addr);
++	WARN(1, "skbuff_debug: deactivating inactive object skb=0x%p state=%d\n",
++	     skb, obj_state);
++	skbuff_debugobj_print_skb(skb);
+ }
+ 
+ inline void skbuff_debugobj_destroy(struct sk_buff *skb)

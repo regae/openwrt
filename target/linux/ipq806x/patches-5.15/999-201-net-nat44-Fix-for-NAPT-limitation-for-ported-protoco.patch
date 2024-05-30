@@ -1,0 +1,37 @@
+From e2596873d8835ab13f22ac9bea9a7d4172c8e030 Mon Sep 17 00:00:00 2001
+From: Apoorv Gupta <apoogupt@codeaurora.org>
+Date: Tue, 8 Jan 2019 12:16:23 +0530
+Subject: [PATCH] net: nat44: Fix for NAPT limitation for ported protocols
+ only.
+
+When multiple iptables nat rules are configured with different port-ranges,
+kernel code doesn't fall through to next rule in the chain, even if all
+ports available in the current rule are exhausted, so the kernel makes
+the flow to share the same 5-tuple with other flows.
+
+This fix returns XT_CONTINUE for ported protocols only when the tuple
+returned by get_unique_tuple is already used. Hence, it will move to next
+rule available in the chain.
+
+CONFIG_NF_NAT_TRY_NEXT_RULE in netfilter/Kconfig should be set to 'y'
+prior to using this fix.
+
+Change-Id: I6d9e79541359266ed9ec9d5420b7346801d528e1
+Signed-off-by: Apoorv Gupta <apoogupt@codeaurora.org>
+---
+ net/netfilter/nf_nat_core.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+--- a/net/netfilter/nf_nat_core.c
++++ b/net/netfilter/nf_nat_core.c
+@@ -602,7 +602,9 @@ nf_nat_setup_info(struct nf_conn *ct,
+ 	get_unique_tuple(&new_tuple, &curr_tuple, range, ct, maniptype);
+ 
+ #if IS_ENABLED(CONFIG_NF_NAT_TRY_NEXT_RULE)
+-	if (nf_nat_used_tuple(&new_tuple, ct))
++	if (curr_tuple.src.u.all != 0 && curr_tuple.dst.u.all != 0 &&
++		new_tuple.src.u.all != 0 && new_tuple.dst.u.all != 0 &&
++		nf_nat_used_tuple(&new_tuple, ct))
+ 		return XT_CONTINUE;
+ #endif
+ 

@@ -1,0 +1,121 @@
+From a24f648db3e0dc3dc714b6eef97d760dca7ff18b Mon Sep 17 00:00:00 2001
+From: Ratheesh Kannoth <rkannoth@codeaurora.org>
+Date: Tue, 28 Jul 2020 15:20:58 +0530
+Subject: [PATCH] tuntap: Add APIs to update tun device statistics from OVPN
+
+Change-Id: Iea6c2d18ab4d97fecbeb41626dc089ee51b94412
+Signed-off-by: Bhaskar Valaboju <bhaskarv@codeaurora.org>
+Signed-off-by: Ratheesh Kannoth <rkannoth@codeaurora.org>
+---
+ drivers/net/tun.c      | 26 ++++++++++++++++++++++++++
+ include/linux/if_tun.h |  6 ++++++
+ include/linux/socket.h |  6 +++---
+ 3 files changed, 35 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/tun.c
++++ b/drivers/net/tun.c
+@@ -183,6 +183,8 @@ struct tun_struct {
+ 	kgid_t			group;
+ 
+ 	struct net_device	*dev;
++	struct rtnl_link_stats64 stats;
++	spinlock_t stats64_lock;	/* protects statistics counters */
+ 	netdev_features_t	set_features;
+ #define TUN_USER_FEATURES (NETIF_F_HW_CSUM|NETIF_F_TSO_ECN|NETIF_F_TSO| \
+ 			  NETIF_F_TSO6)
+@@ -214,6 +216,8 @@ struct tun_struct {
+ 	struct ifreq *ifr;
+ };
+ 
++static tun_get_offload_stats_t tun_get_offload_stats_cb;
++
+ struct veth {
+ 	__be16 h_vlan_proto;
+ 	__be16 h_vlan_TCI;
+@@ -1175,6 +1179,13 @@ tun_net_get_stats64(struct net_device *d
+ 
+ 	dev_get_tstats64(dev, stats);
+ 
++	memset(stats, 0, sizeof(struct rtnl_link_stats64));
++
++	spin_lock(&tun->stats64_lock);
++	if (tun_get_offload_stats_cb)
++		tun_get_offload_stats_cb(dev, stats);
++	spin_unlock(&tun->stats64_lock);
++
+ 	stats->rx_frame_errors +=
+ 		(unsigned long)atomic_long_read(&tun->rx_frame_errors);
+ }
+@@ -3720,6 +3731,21 @@ struct ptr_ring *tun_get_tx_ring(struct
+ }
+ EXPORT_SYMBOL_GPL(tun_get_tx_ring);
+ 
++/* Register tun offload statistics callback */
++void tun_register_offload_stats_callback(tun_get_offload_stats_t stats_cb)
++{
++	BUG_ON(tun_get_offload_stats_cb);
++	rcu_assign_pointer(tun_get_offload_stats_cb, stats_cb);
++}
++EXPORT_SYMBOL(tun_register_offload_stats_callback);
++
++/* Unregister tun offload statistics callback */
++void tun_unregister_offload_stats_callback(void)
++{
++	rcu_assign_pointer(tun_get_offload_stats_cb, NULL);
++}
++EXPORT_SYMBOL(tun_unregister_offload_stats_callback);
++
+ module_init(tun_init);
+ module_exit(tun_cleanup);
+ MODULE_DESCRIPTION(DRV_DESCRIPTION);
+--- a/include/linux/if_tun.h
++++ b/include/linux/if_tun.h
+@@ -26,6 +26,12 @@ struct tun_xdp_hdr {
+ 
+ #if defined(CONFIG_TUN) || defined(CONFIG_TUN_MODULE)
+ struct socket *tun_get_socket(struct file *);
++#ifdef __KERNEL__
++typedef void (*tun_get_offload_stats_t)(struct net_device *dev,
++					struct rtnl_link_stats64 *stats);
++void tun_register_offload_stats_callback(tun_get_offload_stats_t stats_cb);
++void tun_unregister_offload_stats_callback(void);
++#endif
+ struct ptr_ring *tun_get_tx_ring(struct file *file);
+ static inline bool tun_is_xdp_frame(void *ptr)
+ {
+--- a/include/linux/socket.h
++++ b/include/linux/socket.h
+@@ -2,7 +2,6 @@
+ #ifndef _LINUX_SOCKET_H
+ #define _LINUX_SOCKET_H
+ 
+-
+ #include <asm/socket.h>			/* arch-dependent defines	*/
+ #include <linux/sockios.h>		/* the SIOCxxx I/O controls	*/
+ #include <linux/uio.h>			/* iovec support		*/
+@@ -230,7 +229,8 @@ struct ucred {
+ 				 * transport protocol
+ 				 */
+ 
+-#define AF_MAX		46	/* For now.. */
++#define AF_OVPN		46	/* OpenVPN Sockets		*/
++#define AF_MAX		47	/* For now.. */
+ 
+ /* Protocol families, same as address families. */
+ #define PF_UNSPEC	AF_UNSPEC
+@@ -281,6 +281,7 @@ struct ucred {
+ #define PF_SMC		AF_SMC
+ #define PF_XDP		AF_XDP
+ #define PF_MCTP		AF_MCTP
++#define PF_OVPN		AF_OVPN
+ #define PF_MAX		AF_MAX
+ 
+ /* Maximum queue length specifiable by listen.  */
+@@ -328,7 +329,6 @@ struct ucred {
+ #define MSG_CMSG_COMPAT	0		/* We never have 32 bit fixups */
+ #endif
+ 
+-
+ /* Setsockoptions(2) level. Thanks to BSD these must match IPPROTO_xxx */
+ #define SOL_IP		0
+ /* #define SOL_ICMP	1	No-no-no! Due to Linux :-) we cannot use SOL_ICMP=1 */

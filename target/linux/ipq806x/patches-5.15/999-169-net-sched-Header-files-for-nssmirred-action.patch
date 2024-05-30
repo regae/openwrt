@@ -1,0 +1,61 @@
+From 51533041eb12f880a2a35749b592eebfb34cd894 Mon Sep 17 00:00:00 2001
+From: Manish Verma <maniverm@codeaurora.org>
+Date: Thu, 6 Jun 2019 20:42:53 +0530
+Subject: [PATCH] [net/sched] Header files for 'nssmirred' action.
+
+Add the header files for the new 'nssmirred' action, which
+will offload the packets to an IFB interface and configure
+the IFB instance in NSS FW to support the ingress QoS functionality.
+
+Change-Id: I92b0f92e3d034f5cdf213051dd661d3a047b1d0b
+Signed-off-by: Manish Verma <maniverm@codeaurora.org>
+---
+ include/uapi/linux/pkt_cls.h              |  1 +
+ include/uapi/linux/tc_act/tc_nss_mirred.h | 31 +++++++++++++++++++++++
+ 2 files changed, 32 insertions(+)
+ create mode 100644 include/uapi/linux/tc_act/tc_nss_mirred.h
+
+--- a/include/uapi/linux/pkt_cls.h
++++ b/include/uapi/linux/pkt_cls.h
+@@ -136,6 +136,7 @@ enum tca_id {
+ 	TCA_ID_MPLS,
+ 	TCA_ID_CT,
+ 	TCA_ID_GATE,
++	TCA_ID_MIRRED_NSS,
+ 	/* other actions go here */
+ 	__TCA_ID_MAX = 255
+ };
+--- /dev/null
++++ b/include/uapi/linux/tc_act/tc_nss_mirred.h
+@@ -0,0 +1,31 @@
++#ifndef __LINUX_TC_NSS_MIRRED_H
++#define __LINUX_TC_NSS_MIRRED_H
++
++#include <linux/pkt_cls.h>
++
++/*
++ * Types of parameters for nss mirred action.
++ */
++enum {
++	TC_NSS_MIRRED_UNSPEC,
++	TC_NSS_MIRRED_TM,
++	TC_NSS_MIRRED_PARMS,
++	__TC_NSS_MIRRED_MAX
++};
++#define TC_NSS_MIRRED_MAX (__TC_NSS_MIRRED_MAX - 1)
++
++/*
++ * tc_nss_mirred
++ *	tc command structure for nss mirred action.
++ */
++struct tc_nss_mirred {
++	tc_gen;			/* General tc structure. */
++	__u32 from_ifindex;	/* ifindex of the port from which traffic
++				 * will be redirected.
++				 */
++	__u32 to_ifindex;	/* ifindex of the port to which traffic
++				 * will be redirected.
++				 */
++};
++
++#endif	/* __LINUX_TC_NSS_MIRRED_H */

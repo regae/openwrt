@@ -1,0 +1,38 @@
+From d53d4385517abceacc2a51e46a51107e857abc48 Mon Sep 17 00:00:00 2001
+From: Tian Yang <tiany@codeaurora.org>
+Date: Wed, 8 Jul 2020 18:28:57 -0700
+Subject: [PATCH] skb_debug: Initialize prev_type and prev_fp
+
+Fix the unwind_frame crash issue from check_memory_region when ipq_debug_kasan is enabled
+by setting up frame->prev_fp and prev_type as well before walk_stackframe.
+
+Signed-off-by: Tian Yang <tiany@codeaurora.org>
+Change-Id: Iaaa3934b0eab29a8e20ab97e87ed705a1babe566
+---
+ net/core/skbuff_debug.c | 9 ++++-----
+ 1 file changed, 4 insertions(+), 5 deletions(-)
+
+--- a/net/core/skbuff_debug.c
++++ b/net/core/skbuff_debug.c
+@@ -71,17 +71,16 @@ static void skbuff_debugobj_get_stack(vo
+ 	struct skbuff_debugobj_walking w = {0, ret};
+ 	void *p = &w;
+ 
+-	frame.fp = (unsigned long)__builtin_frame_address(0);
+-
+ #ifdef CONFIG_ARM
++	frame.fp = (unsigned long)__builtin_frame_address(0);
+ 	frame.lr = (unsigned long)__builtin_return_address(0);
+ 	frame.sp = current_sp;
+-#endif
+-
+ 	frame.pc = (unsigned long)skbuff_debugobj_get_stack;
++#endif
+ 
+ #ifdef CONFIG_ARM64
+-	walk_stackframe(current,&frame, skbuff_debugobj_walkstack, p);
++	start_backtrace(&frame, (unsigned long)__builtin_frame_address(0), (unsigned long)skbuff_debugobj_get_stack);
++	walk_stackframe(current, &frame, skbuff_debugobj_walkstack, p);
+ #else
+ 	walk_stackframe(&frame, skbuff_debugobj_walkstack, p);
+ #endif

@@ -1,0 +1,23 @@
+From 3fe1786993d629a11c45fab85ca26e5457638ae0 Mon Sep 17 00:00:00 2001
+From: Pavithra R <pavir@codeaurora.org>
+Date: Sun, 1 Oct 2017 02:46:35 -0700
+Subject: [PATCH] [tcrypt] Add test case for authenc(hmac(sha256),cbc(aes))
+
+Change-Id: Icd585298e034277dee7a97f51771978845e0f805
+Signed-off-by: Pavithra R <pavir@codeaurora.org>
+---
+ crypto/tcrypt.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+--- a/crypto/tcrypt.c
++++ b/crypto/tcrypt.c
+@@ -2010,6 +2010,9 @@ static int do_test(const char *alg, u32
+ 		ret += tcrypt_test("cmac(sm4)");
+ 		break;
+ 
++	case 180:
++		ret += tcrypt_test("authenc(hmac(sha256),cbc(aes))");
++		break;
+ 	case 181:
+ 		ret += tcrypt_test("authenc(hmac(sha1),cbc(des))");
+ 		break;

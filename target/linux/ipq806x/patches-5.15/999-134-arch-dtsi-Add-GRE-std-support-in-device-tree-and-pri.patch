@@ -1,0 +1,84 @@
+From bf51cb0977b33f670773552564e2408f77adc87d Mon Sep 17 00:00:00 2001
+From: pavir <pavir@codeaurora.org>
+Date: Mon, 15 May 2017 15:33:02 +0530
+Subject: [PATCH] arch: dtsi: Add GRE std support in device tree and priv_flags
+
+Added dts support and priv flags support for GRE and
+to check the type of device
+
+Change-Id: Ib05a32e9e5458c724c182187362116338d767169
+Signed-off-by: ratheesh kannoth <rkannoth@codeaurora.org>
+Signed-off-by: Pavithra R <pavir@codeaurora.org>
+---
+ include/linux/netdevice.h             | 10 ++++++----
+ net/ipv4/ip_gre.c                     |  2 +-
+ net/ipv6/ip6_gre.c                    |  4 +---
+ 4 files changed, 9 insertions(+), 8 deletions(-)
+
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -1692,6 +1692,12 @@ enum netdev_extra_priv_flags {
+  * These flags are used to check for device type and can be
+  * set and used by the drivers
+  *
++ * @IFF_EXT_TUN_TAP: device is a TUN/TAP device
++ * @IFF_EXT_PPP_L2TPV2: device is a L2TPV2 device
++ * @IFF_EXT_PPP_L2TPV3: device is a L2TPV3 device
++ * @IFF_EXT_PPP_PPTP: device is a PPTP device
++ * @IFF_EXT_GRE_V4_TAP: device is a GRE IPv4 TAP device
++ * @IFF_EXT_GRE_V6_TAP: device is a GRE IPv6 TAP device
+  */
+ enum netdev_priv_flags_ext {
+ 	IFF_EXT_TUN_TAP			= 1<<0,
+--- a/net/ipv4/ip_gre.c
++++ b/net/ipv4/ip_gre.c
+@@ -829,7 +829,6 @@ static int ipgre_tunnel_ctl(struct net_d
+    It allows to construct virtual multiprotocol broadcast "LAN"
+    over the Internet, provided multicast routing is tuned.
+ 
+-
+    I have no idea was this bicycle invented before me,
+    so that I had to set ARPHRD_IPGRE to a random value.
+    I have an impression, that Cisco could make something similar,
+@@ -1341,6 +1340,7 @@ static void ipgre_tap_setup(struct net_d
+ 	dev->netdev_ops	= &gre_tap_netdev_ops;
+ 	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
+ 	dev->priv_flags	|= IFF_LIVE_ADDR_CHANGE;
++	dev->priv_flags_ext	|= IFF_EXT_GRE_V4_TAP;
+ 	ip_tunnel_setup(dev, gre_tap_net_id);
+ }
+ 
+--- a/net/ipv6/ip6_gre.c
++++ b/net/ipv6/ip6_gre.c
+@@ -53,7 +53,6 @@
+ #include <net/erspan.h>
+ #include <net/dst_metadata.h>
+ 
+-
+ static bool log_ecn_error = true;
+ module_param(log_ecn_error, bool, 0644);
+ MODULE_PARM_DESC(log_ecn_error, "Log packets received with corrupted ECN");
+@@ -419,7 +418,6 @@ static void ip6gre_tunnel_uninit(struct
+ 	dev_put(dev);
+ }
+ 
+-
+ static int ip6gre_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
+ 		       u8 type, u8 code, int offset, __be32 info)
+ {
+@@ -1621,7 +1619,6 @@ static int __net_init ip6gre_init_net(st
+ 	 */
+ 	ign->fb_tunnel_dev->features |= NETIF_F_NETNS_LOCAL;
+ 
+-
+ 	ip6gre_fb_tunnel_init(ign->fb_tunnel_dev);
+ 	ign->fb_tunnel_dev->rtnl_link_ops = &ip6gre_link_ops;
+ 
+@@ -1943,6 +1940,7 @@ static void ip6gre_tap_setup(struct net_
+ 
+ 	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
+ 	dev->priv_flags |= IFF_LIVE_ADDR_CHANGE;
++	dev->priv_flags_ext |= IFF_EXT_GRE_V6_TAP;
+ 	netif_keep_dst(dev);
+ }
+ 

@@ -1,0 +1,104 @@
+From b3a3fb8abd37c4eca16c8e3c23c4c343cec48d75 Mon Sep 17 00:00:00 2001
+From: Gaurao Chaudhari <quic_gaurchau@quicinc.com>
+Date: Thu, 21 Apr 2022 20:15:35 -0700
+Subject: [PATCH] skb: Revert the skb recycler fixes.
+
+Change-Id: I40b7c7c180bfb9dc8dd48d6168106b645a089a8f
+Signed-off-by: Gaurao Chaudhari <quic_gaurchau@quicinc.com>
+---
+ net/core/skbuff.c         | 18 +++++++-----------
+ net/core/skbuff_recycle.c | 20 ++++++--------------
+ net/core/skbuff_recycle.h |  4 ++--
+ 3 files changed, 15 insertions(+), 27 deletions(-)
+
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -491,6 +491,11 @@ struct sk_buff *__netdev_alloc_skb(struc
+ #ifdef CONFIG_SKB_RECYCLER
+ 	skb = skb_recycler_alloc(dev, length);
+ 	if (likely(skb)) {
++		/* SKBs in the recycler are from various unknown sources.
++		 * Their truesize is unknown. We should set truesize
++		 * as the needed buffer size before using it.
++		 */
++		skb->truesize = SKB_TRUESIZE(SKB_DATA_ALIGN(len + NET_SKB_PAD));
+ 		return skb;
+ 	}
+ 
+@@ -503,20 +508,11 @@ struct sk_buff *__netdev_alloc_skb(struc
+ 	if (!skb)
+ 		goto skb_fail;
+ 
+-	/*
+-	 * Set truesize as the needed buffer size
++	/* Set truesize as the needed buffer size
+ 	 * rather than the allocated size by __alloc_skb().
+-	 * Change the skb end to keep it in sync with the truesize.
+ 	 */
+-	if (length + NET_SKB_PAD < SKB_WITH_OVERHEAD(PAGE_SIZE)) {
+-		struct skb_shared_info *shinfo;
++	if (length + NET_SKB_PAD < SKB_WITH_OVERHEAD(PAGE_SIZE))
+ 		skb->truesize = SKB_TRUESIZE(SKB_DATA_ALIGN(length + NET_SKB_PAD));
+-		skb->end = skb->tail + SKB_DATA_ALIGN(length + NET_SKB_PAD);
+-
+-		shinfo = skb_shinfo(skb);
+-		memset(shinfo, 0, offsetof(struct skb_shared_info, dataref));
+-		atomic_set(&shinfo->dataref, 1);
+-	}
+ 
+ 	goto skb_success;
+ #else
+--- a/net/core/skbuff_recycle.c
++++ b/net/core/skbuff_recycle.c
+@@ -102,19 +102,7 @@ inline struct sk_buff *skb_recycler_allo
+ 	if (likely(skb)) {
+ 		struct skb_shared_info *shinfo;
+ 
+-		/*
+-		 * SKBs in the recycler are from various unknown sources.
+-		 * Their truesize is unknown. We should set truesize
+-		 * as the needed buffer size before using it.
+-		 * Change the skb end to keep it in sync with the truesize.
+-		 */
+-		skb->data = skb->head + NET_SKB_PAD;
+-		skb_reset_tail_pointer(skb);
+-		skb->truesize = SKB_TRUESIZE(SKB_DATA_ALIGN(length + NET_SKB_PAD));
+-		skb->end = skb->tail + SKB_DATA_ALIGN(length);
+-
+-		/*
+-		 * We're about to write a large amount to the skb to
++		/* We're about to write a large amount to the skb to
+ 		 * zero most of the structure so prefetch the start
+ 		 * of the shinfo region now so it's in the D-cache
+ 		 * before we start to write that.
+@@ -126,9 +114,13 @@ inline struct sk_buff *skb_recycler_allo
+ 		refcount_set(&skb->users, 1);
+ 		skb->mac_header = (typeof(skb->mac_header))~0U;
+ 		skb->transport_header = (typeof(skb->transport_header))~0U;
+-		skb->dev = dev;
+ 		zero_struct(shinfo, offsetof(struct skb_shared_info, dataref));
+ 		atomic_set(&shinfo->dataref, 1);
++
++		skb->data = skb->head + NET_SKB_PAD;
++		skb_reset_tail_pointer(skb);
++
++		skb->dev = dev;
+ 	}
+ 
+ 	return skb;
+--- a/net/core/skbuff_recycle.h
++++ b/net/core/skbuff_recycle.h
+@@ -140,11 +140,11 @@ static inline bool consume_skb_can_recyc
+ 		return false;
+ 
+ 	min_skb_size = SKB_DATA_ALIGN(min_skb_size + NET_SKB_PAD);
+-	if (unlikely(SKB_WITH_OVERHEAD(ksize(skb->head)) < min_skb_size))
++	if (unlikely(skb_end_pointer(skb) - skb->head < min_skb_size))
+ 		return false;
+ 
+ 	max_skb_size = SKB_DATA_ALIGN(max_skb_size + NET_SKB_PAD);
+-	if (unlikely(SKB_WITH_OVERHEAD(ksize(skb->head)) > max_skb_size))
++	if (unlikely(skb_end_pointer(skb) - skb->head > max_skb_size))
+ 		return false;
+ 
+ 	if (unlikely(skb_cloned(skb)))
