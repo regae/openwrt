@@ -1,0 +1,1413 @@
+--- a/fal/nss_macsec_mib.c
++++ b/fal/nss_macsec_mib.c
+@@ -31,6 +31,8 @@ u32 nss_macsec_secy_tx_sc_mib_get(u32 se
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_tx_sc_mib_t secy_tx_sc_mib;
++	u32 sc_id = 0;
++	struct eg_smib_sc_sa mib;
+ 
+ 	memset(&secy_tx_sc_mib, 0, sizeof(secy_tx_sc_mib));
+ 
+@@ -56,8 +58,6 @@ u32 nss_macsec_secy_tx_sc_mib_get(u32 se
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct eg_smib_sc_sa mib;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 	eg_smib_table_sc_sa_get(secy_id, sc_id, (u32 *) (&mib));
+@@ -80,6 +80,8 @@ u32 nss_macsec_secy_tx_sa_mib_get(u32 se
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_tx_sa_mib_t secy_tx_sa_mib;
++	u32 sa_id = 0;
++	struct eg_smib_sc_sa mib;
+ 
+ 	memset(&secy_tx_sa_mib, 0, sizeof(secy_tx_sa_mib));
+ 
+@@ -106,8 +108,6 @@ u32 nss_macsec_secy_tx_sa_mib_get(u32 se
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sa_id = 0;
+-	struct eg_smib_sc_sa mib;
+ 
+ 	sa_id = fal_tx_channel_2_sc_id(secy_id, channel) + an;
+ 	eg_smib_table_sc_sa_get(secy_id, sa_id, (u32 *) (&mib));
+@@ -129,6 +129,7 @@ u32 nss_macsec_secy_tx_mib_get(u32 secy_
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_tx_mib_t secy_tx_mib;
++	struct eg_smib_common mib;
+ 
+ 	memset(&secy_tx_mib, 0, sizeof(secy_tx_mib));
+ 
+@@ -152,7 +153,6 @@ u32 nss_macsec_secy_tx_mib_get(u32 secy_
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	struct eg_smib_common mib;
+ 
+ 	eg_smib_table_common_get(secy_id, (u32 *) (&mib));
+ 
+@@ -184,6 +184,8 @@ u32 nss_macsec_secy_rx_sa_mib_get(u32 se
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_rx_sa_mib_t secy_rx_sa_mib;
++	u32 sa_id = 0;
++	struct ig_smib_sc_sa mib;
+ 
+ 	memset(&secy_rx_sa_mib, 0, sizeof(secy_rx_sa_mib));
+ 
+@@ -220,8 +222,6 @@ u32 nss_macsec_secy_rx_sa_mib_get(u32 se
+ 	}
+ 
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sa_id = 0;
+-	struct ig_smib_sc_sa mib;
+ 
+ 	sa_id = fal_rx_channel_2_sc_id(secy_id, channel) + an;
+ 	ig_smib_table_sc_sa_get(secy_id, sa_id, (u32 *) (&mib));
+@@ -260,6 +260,7 @@ u32 nss_macsec_secy_rx_mib_get(u32 secy_
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_rx_mib_t secy_rx_mib;
++	struct ig_smib_common mib;
+ 
+ 	memset(&secy_rx_mib, 0, sizeof(secy_rx_mib));
+ 
+@@ -299,7 +300,6 @@ u32 nss_macsec_secy_rx_mib_get(u32 secy_
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	struct ig_smib_common mib;
+ 
+ 	ig_smib_table_common_get(secy_id, (u32 *) (&mib));
+ 
+@@ -360,6 +360,7 @@ u32 nss_macsec_secy_tx_mib_clear(u32 sec
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	union egsy_l2sec_control_u  reg;
+ 
+ 	secy_drv = nss_macsec_secy_ops_get(secy_id);
+ 	if (secy_drv != NULL) {
+@@ -370,7 +371,6 @@ u32 nss_macsec_secy_tx_mib_clear(u32 sec
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	union egsy_l2sec_control_u  reg;
+ 
+ 	egsy_l2sec_control_get(secy_id, &reg);
+ 
+@@ -424,6 +424,7 @@ u32 nss_macsec_secy_rx_mib_clear(u32 sec
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	union csr_igsy_ctrl_u  reg;
+ 
+ 	secy_drv = nss_macsec_secy_ops_get(secy_id);
+ 	if (secy_drv != NULL) {
+@@ -434,7 +435,6 @@ u32 nss_macsec_secy_rx_mib_clear(u32 sec
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	union csr_igsy_ctrl_u  reg;
+ 
+ 	csr_igsy_ctrl_get(secy_id, &reg);
+ 
+--- a/fal/nss_macsec_secy.c
++++ b/fal/nss_macsec_secy.c
+@@ -90,6 +90,13 @@ u32 nss_macsec_secy_init(u32 secy_id)
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	union egsy_emac_regs_u eg_emac;
++	union insy_emac_regs_u in_emac;
++	union egsy_sctrl_drop_en_u eg_drop;
++	union egsy_ectrl_enable_u  eg_enable;
++	union insy_sctrl_drop_en_u ig_drop;
++	union insy_ectrl_en_u      ig_enable;
++	union csr_igsy_ctrl_u reg_val;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM));
+ 
+@@ -104,14 +111,6 @@ u32 nss_macsec_secy_init(u32 secy_id)
+ 	}
+ 
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	union egsy_emac_regs_u eg_emac;
+-	union insy_emac_regs_u in_emac;
+-	union egsy_sctrl_drop_en_u eg_drop;
+-	union egsy_ectrl_enable_u  eg_enable;
+-	union insy_sctrl_drop_en_u ig_drop;
+-	union insy_ectrl_en_u      ig_enable;
+-	union csr_igsy_ctrl_u reg_val;
+-
+ 	/* EMAC 1 & 2 reset (include disable) */
+ 	nss_macsec_emac_reset(secy_id);
+ 	mdelay(100);		/* delay 100 ms */
+@@ -369,6 +368,8 @@ u32 nss_macsec_secy_mtu_set(u32 secy_id,
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	union csr_egsy_mtu_u eg_mtu;
++	union csr_igsy_mtu_u ig_mtu;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM));
+ 
+@@ -387,8 +388,6 @@ u32 nss_macsec_secy_mtu_set(u32 secy_id,
+ 	}
+ 
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	union csr_egsy_mtu_u eg_mtu;
+-	union csr_igsy_mtu_u ig_mtu;
+ 
+ 	g_secy_cfg[secy_id].mtu = mtu;
+ 
+--- a/fal/nss_macsec_secy_rx.c
++++ b/fal/nss_macsec_secy_rx.c
+@@ -71,6 +71,7 @@ u32 nss_macsec_secy_rx_ctl_filt_get(u32
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_ctl_filt_t secy_ctl_filt;
++	struct ig_ctl_filt ctl_entry;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(filt_id < FAL_RX_CTL_FILT_NUM) && (pfilt != NULL));
+@@ -96,7 +97,6 @@ u32 nss_macsec_secy_rx_ctl_filt_get(u32
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	struct ig_ctl_filt ctl_entry;
+ 
+ 	SHR_RET_ON_ERR(ig_ctl_filt_table_get
+ 		       (secy_id, filt_id, (u32 *) (&ctl_entry)));
+@@ -123,6 +123,7 @@ u32 nss_macsec_secy_rx_ctl_filt_set(u32
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_ctl_filt_t secy_ctl_filt;
++	struct ig_ctl_filt ctl_entry;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(filt_id < FAL_RX_CTL_FILT_NUM) && (pfilt != NULL));
+@@ -146,7 +147,6 @@ u32 nss_macsec_secy_rx_ctl_filt_set(u32
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	struct ig_ctl_filt ctl_entry;
+ 
+ 	memset(&ctl_entry, 0, sizeof(ctl_entry));
+ 
+@@ -172,6 +172,7 @@ u32 nss_macsec_secy_rx_ctl_filt_clear(u3
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	struct ig_ctl_filt ctl_entry;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM)
+ 			&& (filt_id < FAL_RX_CTL_FILT_NUM));
+@@ -187,7 +188,6 @@ u32 nss_macsec_secy_rx_ctl_filt_clear(u3
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	struct ig_ctl_filt ctl_entry;
+ 
+ 	memset(&ctl_entry, 0, sizeof(union ig_ctl_filt_u));
+ 
+@@ -227,6 +227,7 @@ u32 nss_macsec_secy_rx_prc_lut_get(u32 s
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_rx_prc_lut_t secy_rx_prc_lut;
++	struct ig_prc_lut igc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(index < FAL_RX_CLASS_LUT_NUM) && (pentry != NULL));
+@@ -247,7 +248,6 @@ u32 nss_macsec_secy_rx_prc_lut_get(u32 s
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	struct ig_prc_lut igc;
+ 
+ 	SHR_RET_ON_ERR(ig_prc_lut_table_get(secy_id, index, (u32 *)(&igc)));
+ 
+@@ -300,6 +300,7 @@ u32 nss_macsec_secy_rx_prc_lut_set(u32 s
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_rx_prc_lut_t *secy_rx_prc_lut = NULL;
++	struct ig_prc_lut igc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(index < FAL_RX_CLASS_LUT_NUM) && (pentry != NULL));
+@@ -316,7 +317,6 @@ u32 nss_macsec_secy_rx_prc_lut_set(u32 s
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	struct ig_prc_lut igc;
+ 
+ 	memset(&igc, 0, sizeof(igc));
+ 	//tiger: other fields
+@@ -371,6 +371,7 @@ u32 nss_macsec_secy_rx_prc_lut_clear(u32
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	struct ig_prc_lut igc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(index < FAL_RX_CLASS_LUT_NUM));
+@@ -384,7 +385,6 @@ u32 nss_macsec_secy_rx_prc_lut_clear(u32
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	struct ig_prc_lut igc;
+ 
+ 	memset(&igc, 0, sizeof(igc));
+ 
+@@ -419,6 +419,8 @@ u32 nss_macsec_secy_rx_sc_create(u32 sec
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct ig_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)));
+@@ -432,8 +434,6 @@ u32 nss_macsec_secy_rx_sc_create(u32 sec
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct ig_sc sc;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 
+@@ -450,6 +450,8 @@ u32 nss_macsec_secy_rx_sc_en_get(u32 sec
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct ig_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -465,8 +467,6 @@ u32 nss_macsec_secy_rx_sc_en_get(u32 sec
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct ig_sc sc;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 
+@@ -481,6 +481,8 @@ u32 nss_macsec_secy_rx_sc_en_set(u32 sec
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct ig_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)));
+@@ -495,8 +497,6 @@ u32 nss_macsec_secy_rx_sc_en_set(u32 sec
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct ig_sc sc;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 
+@@ -514,6 +514,8 @@ u32 nss_macsec_secy_rx_sc_del(u32 secy_i
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct ig_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)));
+@@ -527,8 +529,6 @@ u32 nss_macsec_secy_rx_sc_del(u32 secy_i
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct ig_sc sc;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 
+@@ -542,6 +542,9 @@ u32 nss_macsec_secy_rx_sc_del_all(u32 se
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct ig_sc sc;
++	int ret = 0;
+ 
+ 	SHR_PARAM_CHECK(secy_id < FAL_SECY_ID_NUM);
+ 
+@@ -554,9 +557,6 @@ u32 nss_macsec_secy_rx_sc_del_all(u32 se
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct ig_sc sc;
+-	int ret = 0;
+ 
+ 	memset(&sc, 0, sizeof(sc));
+ 
+@@ -575,6 +575,8 @@ u32 nss_macsec_secy_rx_sc_validate_frame
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	enum secy_vf_t secy_vf_mode;
++	u32 sc_id = 0;
++	struct ig_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -599,8 +601,6 @@ u32 nss_macsec_secy_rx_sc_validate_frame
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct ig_sc sc;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 
+@@ -617,6 +617,8 @@ u32 nss_macsec_secy_rx_sc_validate_frame
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	enum secy_vf_t secy_vf_mode = STRICT;
++	u32 sc_id = 0;
++	struct ig_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -641,8 +643,6 @@ u32 nss_macsec_secy_rx_sc_validate_frame
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct ig_sc sc;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 	SHR_RET_ON_ERR(ig_sc_table_get(secy_id, sc_id, (u32 *)(&sc)));
+@@ -658,6 +658,8 @@ u32 nss_macsec_secy_rx_sc_replay_protect
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct ig_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -673,8 +675,6 @@ u32 nss_macsec_secy_rx_sc_replay_protect
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct ig_sc sc;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 
+@@ -690,6 +690,8 @@ u32 nss_macsec_secy_rx_sc_replay_protect
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct ig_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)));
+@@ -704,8 +706,6 @@ u32 nss_macsec_secy_rx_sc_replay_protect
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct ig_sc sc;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 	SHR_RET_ON_ERR(ig_sc_table_get(secy_id, sc_id, (u32 *)(&sc)));
+@@ -721,6 +721,8 @@ u32 nss_macsec_secy_rx_sc_anti_replay_wi
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct ig_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -736,8 +738,6 @@ u32 nss_macsec_secy_rx_sc_anti_replay_wi
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct ig_sc sc;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 
+@@ -754,6 +754,8 @@ u32 nss_macsec_secy_rx_sc_anti_replay_wi
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct ig_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)));
+@@ -768,8 +770,6 @@ u32 nss_macsec_secy_rx_sc_anti_replay_wi
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct ig_sc sc;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 	SHR_RET_ON_ERR(ig_sc_table_get(secy_id, sc_id, (u32 *)(&sc)));
+@@ -787,6 +787,8 @@ u32 nss_macsec_secy_rx_sc_in_used_get(u3
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct ig_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -802,8 +804,6 @@ u32 nss_macsec_secy_rx_sc_in_used_get(u3
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct ig_sc sc;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 
+@@ -969,6 +969,9 @@ u32 nss_macsec_secy_rx_sa_create(u32 sec
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	u32 sa_id = 0;
++	struct ig_sa sa;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -983,9 +986,6 @@ u32 nss_macsec_secy_rx_sa_create(u32 sec
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sa_id = 0;
+-	struct ig_sa sa;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 	sa_id = IG_SA_INDEX_MIN + sc_id + an;
+@@ -1003,6 +1003,9 @@ u32 nss_macsec_secy_rx_sa_en_get(u32 sec
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	u32 sa_id = 0;
++	struct ig_sa sa;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1019,9 +1022,6 @@ u32 nss_macsec_secy_rx_sa_en_get(u32 sec
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sa_id = 0;
+-	struct ig_sa sa;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 	sa_id = IG_SA_INDEX_MIN + sc_id + an;
+@@ -1036,6 +1036,9 @@ u32 nss_macsec_secy_rx_sa_en_set(u32 sec
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	u32 sa_id = 0;
++	struct ig_sa sa;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1051,9 +1054,6 @@ u32 nss_macsec_secy_rx_sa_en_set(u32 sec
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sa_id = 0;
+-	struct ig_sa sa;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 	sa_id = IG_SA_INDEX_MIN + sc_id + an;
+@@ -1071,6 +1071,9 @@ u32 nss_macsec_secy_rx_sa_next_pn_get(u3
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	u32 sa_id = 0;
++	struct ig_sa sa;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1086,9 +1089,6 @@ u32 nss_macsec_secy_rx_sa_next_pn_get(u3
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sa_id = 0;
+-	struct ig_sa sa;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 	sa_id = IG_SA_INDEX_MIN + sc_id + an;
+@@ -1125,6 +1125,9 @@ u32 nss_macsec_secy_rx_sa_del(u32 secy_i
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	u32 sa_id = 0;
++	struct ig_sa sa;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1139,9 +1142,6 @@ u32 nss_macsec_secy_rx_sa_del(u32 secy_i
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sa_id = 0;
+-	struct ig_sa sa;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 	sa_id = IG_SA_INDEX_MIN + sc_id + an;
+@@ -1156,6 +1156,8 @@ u32 nss_macsec_secy_rx_sa_del_all(u32 se
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	int i = 0;
++	struct ig_sa sa;
+ 
+ 	secy_drv = nss_macsec_secy_ops_get(secy_id);
+ 	if (secy_drv != NULL) {
+@@ -1166,9 +1168,6 @@ u32 nss_macsec_secy_rx_sa_del_all(u32 se
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	int i = 0;
+-	struct ig_sa sa;
+-
+ 	memset(&sa, 0, sizeof(sa));
+ 
+ 	for (i = IG_SA_INDEX_MIN; i <= IG_SA_INDEX_MAX; i++) {
+@@ -1184,6 +1183,9 @@ u32 nss_macsec_secy_rx_sak_get(u32 secy_
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_sak_t secy_key;
++	u32 sc_id = 0;
++	u32 sak_id = 0;
++	struct ig_sak sak;
+ 
+ 	memset(&secy_key, 0, sizeof(secy_key));
+ 
+@@ -1204,9 +1206,6 @@ u32 nss_macsec_secy_rx_sak_get(u32 secy_
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sak_id = 0;
+-	struct ig_sak sak;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 	sak_id = IG_SAK_INDEX_MIN + sc_id + an;
+@@ -1224,6 +1223,9 @@ u32 nss_macsec_secy_rx_sak_set(u32 secy_
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_sak_t *secy_key;
++	u32 sc_id = 0;
++	u32 sak_id = 0;
++	struct ig_sak sak;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1242,9 +1244,6 @@ u32 nss_macsec_secy_rx_sak_set(u32 secy_
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sak_id = 0;
+-	struct ig_sak sak;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 	sak_id = IG_SAK_INDEX_MIN + sc_id + an;
+@@ -1260,6 +1259,9 @@ u32 nss_macsec_secy_rx_sa_in_used_get(u3
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	u32 sa_id = 0;
++	struct ig_sa sa;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1276,9 +1278,6 @@ u32 nss_macsec_secy_rx_sa_in_used_get(u3
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sa_id = 0;
+-	struct ig_sa sa;
+ 
+ 	sc_id = fal_rx_channel_2_sc_id(secy_id, channel);
+ 	sa_id = IG_SA_INDEX_MIN + sc_id + an;
+@@ -1293,6 +1292,7 @@ u32 nss_macsec_secy_rx_replay_protect_ge
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	union insy_ectrl_en_u value;
+ 
+ 	secy_drv = nss_macsec_secy_ops_get(secy_id);
+ 	if (secy_drv != NULL) {
+@@ -1304,7 +1304,6 @@ u32 nss_macsec_secy_rx_replay_protect_ge
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	union insy_ectrl_en_u value;
+ 
+ 	value.val = 0;
+ 	SHR_RET_ON_ERR(insy_ectrl_en_get(secy_id, &value));
+@@ -1318,6 +1317,7 @@ u32 nss_macsec_secy_rx_replay_protect_se
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	union insy_ectrl_en_u value;
+ 
+ 	secy_drv = nss_macsec_secy_ops_get(secy_id);
+ 	if (secy_drv != NULL) {
+@@ -1329,7 +1329,6 @@ u32 nss_macsec_secy_rx_replay_protect_se
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	union insy_ectrl_en_u value;
+ 
+ 	value.val = 0;
+ 	SHR_RET_ON_ERR(insy_ectrl_en_get(secy_id, &value));
+@@ -1349,6 +1348,7 @@ u32 nss_macsec_secy_rx_validate_frame_ge
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	enum secy_vf_t secy_vf_mode;
++	union csr_igsy_ctrl_u value;
+ 
+ 	secy_drv = nss_macsec_secy_ops_get(secy_id);
+ 	if (secy_drv != NULL) {
+@@ -1369,7 +1369,6 @@ u32 nss_macsec_secy_rx_validate_frame_ge
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	union csr_igsy_ctrl_u value;
+ 
+ 	value.val = 0;
+ 	SHR_RET_ON_ERR(csr_igsy_ctrl_get(secy_id, &value));
+@@ -1384,6 +1383,7 @@ u32 nss_macsec_secy_rx_validate_frame_se
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	enum secy_vf_t secy_vf_mode = STRICT;
++	union csr_igsy_ctrl_u value;
+ 
+ 	secy_drv = nss_macsec_secy_ops_get(secy_id);
+ 	if (secy_drv != NULL) {
+@@ -1405,7 +1405,6 @@ u32 nss_macsec_secy_rx_validate_frame_se
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	union csr_igsy_ctrl_u value;
+ 
+ 	value.val = 0;
+ 	SHR_RET_ON_ERR(csr_igsy_ctrl_get(secy_id, &value));
+--- a/fal/nss_macsec_secy_tx.c
++++ b/fal/nss_macsec_secy_tx.c
+@@ -444,6 +444,7 @@ u32 nss_macsec_secy_tx_ctl_filt_get(u32
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_ctl_filt_t secy_ctl_filt;
++	struct eg_ctl_filt ctl_entry;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(filt_id < FAL_TX_CTL_FILT_HW_NUM) && (pfilt != NULL));
+@@ -469,7 +470,6 @@ u32 nss_macsec_secy_tx_ctl_filt_get(u32
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	struct eg_ctl_filt ctl_entry;
+ 
+ 	SHR_RET_ON_ERR(eg_ctl_filt_table_get
+ 		       (secy_id, filt_id, (u32 *) (&ctl_entry)));
+@@ -495,6 +495,7 @@ u32 nss_macsec_secy_tx_ctl_filt_set(u32
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_ctl_filt_t secy_ctl_filt;
++	struct eg_ctl_filt ctl_entry;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(filt_id < FAL_TX_CTL_FILT_NUM) && (pfilt != NULL));
+@@ -520,7 +521,6 @@ u32 nss_macsec_secy_tx_ctl_filt_set(u32
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	struct eg_ctl_filt ctl_entry;
+ 
+ 	memset(&ctl_entry, 0, sizeof(ctl_entry));
+ 
+@@ -559,6 +559,7 @@ u32 nss_macsec_secy_tx_ctl_filt_clear(u3
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	struct eg_ctl_filt ctl_entry;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM)
+ 			&& (filt_id < FAL_TX_CTL_FILT_NUM));
+@@ -574,7 +575,6 @@ u32 nss_macsec_secy_tx_ctl_filt_clear(u3
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	struct eg_ctl_filt ctl_entry;
+ 
+ 	memset(&ctl_entry, 0, sizeof(union eg_ctl_filt_u));
+ 
+@@ -588,6 +588,7 @@ u32 nss_macsec_secy_tx_ctl_filt_clear_al
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	int i;
+ 
+ 	SHR_PARAM_CHECK(secy_id < FAL_SECY_ID_NUM);
+ 
+@@ -600,7 +601,6 @@ u32 nss_macsec_secy_tx_ctl_filt_clear_al
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	int i;
+ 
+ 	for (i = 0; i < FAL_TX_CTL_FILT_NUM; i++) {
+ 		nss_macsec_secy_tx_ctl_filt_clear(secy_id, i);
+@@ -615,6 +615,7 @@ u32 nss_macsec_secy_tx_class_lut_get(u32
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_tx_class_lut_t secy_tx_clss_lut;
++	struct eg_class_lut egc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(index < FAL_TX_CLASS_LUT_NUM) && (pentry != NULL));
+@@ -634,7 +635,6 @@ u32 nss_macsec_secy_tx_class_lut_get(u32
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	struct eg_class_lut egc;
+ 
+ 	SHR_RET_ON_ERR(eg_class_lut_table_get(secy_id, index, (u32 *) (&egc)));
+ 
+@@ -696,6 +696,8 @@ u32 nss_macsec_secy_tx_class_lut_set(u32
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_tx_class_lut_t *secy_tx_clss_lut = NULL;
++	struct eg_class_lut egc;
++	u8 *psci = NULL;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(index < FAL_TX_CLASS_LUT_NUM) && (pentry != NULL));
+@@ -712,8 +714,6 @@ u32 nss_macsec_secy_tx_class_lut_set(u32
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	struct eg_class_lut egc;
+-	u8 *psci = NULL;
+ 
+ 	memset(&egc, 0, sizeof(egc));
+ 	//tiger: other fields
+@@ -783,6 +783,7 @@ u32 nss_macsec_secy_tx_class_lut_clear(u
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	struct eg_class_lut egc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(index < FAL_TX_CLASS_LUT_NUM));
+@@ -796,7 +797,6 @@ u32 nss_macsec_secy_tx_class_lut_clear(u
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	struct eg_class_lut egc;
+ 
+ 	memset(&egc, 0, sizeof(egc));
+ 
+@@ -809,6 +809,7 @@ u32 nss_macsec_secy_tx_class_lut_clear_a
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	int i;
+ 
+ 	secy_drv = nss_macsec_secy_ops_get(secy_id);
+ 	if (secy_drv != NULL) {
+@@ -820,7 +821,6 @@ u32 nss_macsec_secy_tx_class_lut_clear_a
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	int i;
+ 
+ 	for (i = 0; i < FAL_TX_CLASS_LUT_NUM; i++) {
+ 		nss_macsec_secy_tx_class_lut_clear(secy_id, i);
+@@ -834,6 +834,8 @@ static u32 nss_macsec_secy_tx_class_lut_
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	int i;
++	struct eg_class_lut egc;
+ 
+ 	secy_drv = nss_macsec_secy_ops_get(secy_id);
+ 	if (secy_drv != NULL) {
+@@ -845,9 +847,6 @@ static u32 nss_macsec_secy_tx_class_lut_
+ 		return rv;
+ 	}
+ 
+-	int i;
+-	struct eg_class_lut egc;
+-
+ 	memset(&egc, 0 , sizeof(egc));
+ 
+ 	for (i = 0; i < FAL_TX_CLASS_LUT_NUM; i++) {
+@@ -871,6 +870,8 @@ u32 nss_macsec_secy_tx_sc_create(u32 sec
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct eg_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -887,9 +888,6 @@ u32 nss_macsec_secy_tx_sc_create(u32 sec
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct eg_sc sc;
+-
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 
+ 	memset(&sc, 0, sizeof(sc));
+@@ -915,6 +913,8 @@ u32 nss_macsec_secy_tx_sc_en_get(u32 sec
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct eg_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -931,9 +931,6 @@ u32 nss_macsec_secy_tx_sc_en_get(u32 sec
+ 	}
+ 
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct eg_sc sc;
+-
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 
+ 	SHR_RET_ON_ERR(eg_sc_table_get(secy_id, sc_id, (u32 *) (&sc)));
+@@ -947,6 +944,8 @@ u32 nss_macsec_secy_tx_sc_en_set(u32 sec
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct eg_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)));
+@@ -961,9 +960,6 @@ u32 nss_macsec_secy_tx_sc_en_set(u32 sec
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct eg_sc sc;
+-
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 
+ 	SHR_RET_ON_ERR(eg_sc_table_get(secy_id, sc_id, (u32 *) (&sc)));
+@@ -980,6 +976,8 @@ u32 nss_macsec_secy_tx_sc_del(u32 secy_i
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct eg_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)));
+@@ -994,9 +992,6 @@ u32 nss_macsec_secy_tx_sc_del(u32 secy_i
+ 	}
+ 
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct eg_sc sc;
+-
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 
+ 	memset(&sc, 0, sizeof(sc));
+@@ -1014,6 +1009,8 @@ u32 nss_macsec_secy_tx_sc_del_all(u32 se
+ 	int ret = 0;
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct eg_sc sc;
+ 
+ 	SHR_PARAM_CHECK(secy_id < FAL_SECY_ID_NUM);
+ 
+@@ -1026,9 +1023,6 @@ u32 nss_macsec_secy_tx_sc_del_all(u32 se
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct eg_sc sc;
+-
+ 	memset(&sc, 0, sizeof(sc));
+ 
+ 	for (sc_id = EG_SC_INDEX_MIN; sc_id <= EG_SC_INDEX_MAX; sc_id++) {
+@@ -1042,6 +1036,8 @@ u32 nss_macsec_secy_tx_sc_an_get(u32 sec
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct eg_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1057,9 +1053,6 @@ u32 nss_macsec_secy_tx_sc_an_get(u32 sec
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct eg_sc sc;
+-
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 
+ 	SHR_RET_ON_ERR(eg_sc_table_get(secy_id, sc_id, (u32 *) (&sc)));
+@@ -1073,6 +1066,8 @@ u32 nss_macsec_secy_tx_sc_an_set(u32 sec
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct eg_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1089,8 +1084,6 @@ u32 nss_macsec_secy_tx_sc_an_set(u32 sec
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct eg_sc sc;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 
+@@ -1107,6 +1100,8 @@ u32 nss_macsec_secy_tx_sc_in_used_get(u3
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct eg_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1122,8 +1117,6 @@ u32 nss_macsec_secy_tx_sc_in_used_get(u3
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct eg_sc sc;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 
+@@ -1138,6 +1131,8 @@ u32 nss_macsec_secy_tx_sc_tci_7_2_get(u3
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct eg_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1153,8 +1148,6 @@ u32 nss_macsec_secy_tx_sc_tci_7_2_get(u3
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct eg_sc sc;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 
+@@ -1178,6 +1171,8 @@ u32 nss_macsec_secy_tx_sc_tci_7_2_set(u3
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct eg_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1193,8 +1188,6 @@ u32 nss_macsec_secy_tx_sc_tci_7_2_set(u3
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct eg_sc sc;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 
+@@ -1212,6 +1205,8 @@ u32 nss_macsec_secy_tx_sc_confidentialit
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	enum secy_cofidentiality_offset_t secy_offset;
++	u32 sc_id = 0;
++	struct eg_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1237,8 +1232,6 @@ u32 nss_macsec_secy_tx_sc_confidentialit
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct eg_sc sc;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 
+@@ -1255,6 +1248,8 @@ u32 nss_macsec_secy_tx_sc_confidentialit
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	enum secy_cofidentiality_offset_t secy_offset;
++	u32 sc_id = 0;
++	struct eg_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)));
+@@ -1279,8 +1274,6 @@ u32 nss_macsec_secy_tx_sc_confidentialit
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct eg_sc sc;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 
+@@ -1296,6 +1289,8 @@ u32 nss_macsec_secy_tx_sc_protect_get(u3
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct eg_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1311,8 +1306,6 @@ u32 nss_macsec_secy_tx_sc_protect_get(u3
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct eg_sc sc;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 
+@@ -1327,6 +1320,8 @@ u32 nss_macsec_secy_tx_sc_protect_set(u3
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	struct eg_sc sc;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)));
+@@ -1341,8 +1336,6 @@ u32 nss_macsec_secy_tx_sc_protect_set(u3
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	struct eg_sc sc;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 
+@@ -1403,6 +1396,9 @@ u32 nss_macsec_secy_tx_sa_create(u32 sec
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	u32 sa_id = 0;
++	struct eg_sa sa;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1417,9 +1413,6 @@ u32 nss_macsec_secy_tx_sa_create(u32 sec
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sa_id = 0;
+-	struct eg_sa sa;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 	sa_id = EG_SA_INDEX_MIN + sc_id + an;
+@@ -1437,6 +1430,9 @@ u32 nss_macsec_secy_tx_sa_en_get(u32 sec
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	u32 sa_id = 0;
++	struct eg_sa sa;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1453,9 +1449,6 @@ u32 nss_macsec_secy_tx_sa_en_get(u32 sec
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sa_id = 0;
+-	struct eg_sa sa;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 	sa_id = EG_SA_INDEX_MIN + sc_id + an;
+@@ -1470,6 +1463,9 @@ u32 nss_macsec_secy_tx_sa_en_set(u32 sec
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	u32 sa_id = 0;
++	struct eg_sa sa;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1485,9 +1481,6 @@ u32 nss_macsec_secy_tx_sa_en_set(u32 sec
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sa_id = 0;
+-	struct eg_sa sa;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 	sa_id = EG_SA_INDEX_MIN + sc_id + an;
+@@ -1504,6 +1497,9 @@ u32 nss_macsec_secy_tx_sa_del(u32 secy_i
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	u32 sa_id = 0;
++	struct eg_sa sa;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1518,10 +1514,6 @@ u32 nss_macsec_secy_tx_sa_del(u32 secy_i
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sa_id = 0;
+-	struct eg_sa sa;
+-
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 	sa_id = EG_SA_INDEX_MIN + sc_id + an;
+ 
+@@ -1537,6 +1529,8 @@ u32 nss_macsec_secy_tx_sa_del_all(u32 se
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	int i = 0;
++	struct eg_sa sa;
+ 
+ 	secy_drv = nss_macsec_secy_ops_get(secy_id);
+ 	if (secy_drv != NULL) {
+@@ -1547,8 +1541,6 @@ u32 nss_macsec_secy_tx_sa_del_all(u32 se
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	int i = 0;
+-	struct eg_sa sa;
+ 
+ 	memset(&sa, 0, sizeof(sa));
+ 
+@@ -1564,6 +1556,9 @@ u32 nss_macsec_secy_tx_sa_next_pn_get(u3
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	u32 sa_id = 0;
++	struct eg_sa sa;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1580,9 +1575,6 @@ u32 nss_macsec_secy_tx_sa_next_pn_get(u3
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sa_id = 0;
+-	struct eg_sa sa;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 	sa_id = EG_SA_INDEX_MIN + sc_id + an;
+@@ -1599,6 +1591,9 @@ u32 nss_macsec_secy_tx_sa_next_pn_set(u3
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	u32 sa_id = 0;
++	struct eg_sa sa;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1614,9 +1609,6 @@ u32 nss_macsec_secy_tx_sa_next_pn_set(u3
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sa_id = 0;
+-	struct eg_sa sa;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 	sa_id = EG_SA_INDEX_MIN + sc_id + an;
+@@ -1634,6 +1626,9 @@ u32 nss_macsec_secy_tx_sa_in_used_get(u3
+ {
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
++	u32 sc_id = 0;
++	u32 sa_id = 0;
++	struct eg_sa sa;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1650,9 +1645,6 @@ u32 nss_macsec_secy_tx_sa_in_used_get(u3
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sa_id = 0;
+-	struct eg_sa sa;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 	sa_id = EG_SA_INDEX_MIN + sc_id + an;
+@@ -1670,6 +1662,9 @@ u32 nss_macsec_secy_tx_sak_get(u32 secy_
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_sak_t secy_key;
++	u32 sc_id = 0;
++	u32 sak_id = 0;
++	struct eg_sak sak;
+ 
+ 	memset(&secy_key, 0, sizeof(secy_key));
+ 
+@@ -1690,9 +1685,6 @@ u32 nss_macsec_secy_tx_sak_get(u32 secy_
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sak_id = 0;
+-	struct eg_sak sak;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 	sak_id = EG_SAK_INDEX_MIN + sc_id + an;
+@@ -1710,6 +1702,9 @@ u32 nss_macsec_secy_tx_sak_set(u32 secy_
+ 	g_error_t rv;
+ 	struct secy_drv_t *secy_drv;
+ 	struct secy_sak_t *secy_key = NULL;
++	u32 sc_id = 0;
++	u32 sak_id = 0;
++	struct eg_sak sak;
+ 
+ 	SHR_PARAM_CHECK((secy_id < FAL_SECY_ID_NUM) &&
+ 			(channel < FAL_SECY_CHANNEL_NUM(secy_id)) &&
+@@ -1728,9 +1723,6 @@ u32 nss_macsec_secy_tx_sak_set(u32 secy_
+ 		return rv;
+ 	}
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	u32 sc_id = 0;
+-	u32 sak_id = 0;
+-	struct eg_sak sak;
+ 
+ 	sc_id = fal_tx_channel_2_sc_id(secy_id, channel);
+ 	sak_id = EG_SAK_INDEX_MIN + sc_id + an;
+--- a/nss_macsec_init.c
++++ b/nss_macsec_init.c
+@@ -44,11 +44,19 @@
+ /* NSS MACSEC Base Addresses */
+ #define NSS_MACSEC_BASE			0x37800000
+ #define NSS_MACSEC_REG_LEN		0x00200000
++#ifdef MACSEC_IPQ806X_SUPPORT
++#define MACSEC_DEVICE_NUM 3
++#else
+ #define MACSEC_DEVICE_NUM 4
++#endif
+ 
+ static struct sock *sdk_nl_sk = NULL;
+ 
++#ifdef MACSEC_IPQ806X_SUPPORT
++static bool phy_driver_flag[MACSEC_DEVICE_NUM] = {FALSE, FALSE, FALSE};
++#else
+ static bool phy_driver_flag[MACSEC_DEVICE_NUM] = {FALSE, FALSE, FALSE, FALSE};
++#endif
+ static bool secy_phy_flag;
+ 
+ #ifdef MACSEC_IPQ806X_SUPPORT
+@@ -193,8 +201,12 @@ static int nss_macsec_netlink_init(void)
+ 	return 0;
+ }
+ 
++#ifdef MACSEC_IPQ806X_SUPPORT
++static struct mii_bus *nss_macsec_miibus[MAX_SECY_ID] = {NULL, NULL, NULL};
++#else
+ static struct mii_bus *nss_macsec_miibus[MAX_SECY_ID] = {
+ 	NULL, NULL, NULL, NULL};
++#endif
+ 
+ int nss_macsec_phy_mdio_write(u32 secy_id, u32 reg_addr, u16 val)
+ {
+@@ -291,6 +303,10 @@ static int nss_macsec_dt_init(uint32_t d
+ 	struct device_node *nss_macsec_node = NULL;
+ 	char dev_name[32];
+ 	unsigned int phy_address;
++	unsigned int mem_start, mem_len;
++	void __iomem *mmap_io_addr = NULL;
++	const __be32 *reg_cfg;
++	unsigned int len = 0;
+ 
+ 	memset(dev_name, 0, sizeof(dev_name));
+ 	snprintf(dev_name, sizeof(dev_name), "nss-macsec%d", dev_id);
+@@ -315,11 +331,6 @@ static int nss_macsec_dt_init(uint32_t d
+ /* end for Napa masec*/
+ 
+ #ifdef MACSEC_IPQ806X_SUPPORT
+-	unsigned int mem_start, mem_len;
+-	void __iomem *mmap_io_addr = NULL;
+-	const __be32 *reg_cfg;
+-	unsigned int len = 0;
+-
+ 	reg_cfg = of_get_property(nss_macsec_node, "reg", &len);
+ 	if (!reg_cfg) {
+ 		printk(KERN_ERR "%s: error reading device node properties for reg\n", dev_name);
+@@ -365,6 +376,7 @@ static int nss_macsec_dt_init(uint32_t d
+ static int nss_macsec_clean(void)
+ {
+ 	int ret = 0, secy_id = 0;
++		uint32_t dev_id = 0;
+ 
+ 	if (secy_phy_flag == TRUE) {
+ 		for (secy_id = 0; secy_id < MACSEC_DEVICE_NUM; secy_id++) {
+@@ -372,9 +384,8 @@ static int nss_macsec_clean(void)
+ 				nss_macsec_secy_driver_cleanup(secy_id);
+ 		}
+ 	} else {
+-#ifdef MACSEC_IPQ806X_SUPPORT
+-		uint32_t dev_id = 0;
+ 
++#ifdef MACSEC_IPQ806X_SUPPORT
+ 		if (macsec_notifier_register_status) {
+ 			nss_gmac_link_state_change_notify_unregister(
+ 				&macsec_notifier);
