@@ -20,7 +20,7 @@ define KernelPackage/qca-ssdk
   CATEGORY:=Kernel modules
   SUBMENU:=Network Devices
   TITLE:=Qualcom SSDK switch driver
-  DEPENDS:=@(TARGET_ipq807x)
+  DEPENDS:=@(TARGET_ipq807x||TARGET_ipq806x)
   FILES:=$(PKG_BUILD_DIR)/build/bin/qca-ssdk.ko
   AUTOLOAD:=$(call AutoLoad,30,qca-ssdk)
 endef
@@ -48,11 +48,15 @@ MAKE_FLAGS+= \
 	ARCH=$(LINUX_KARCH) \
 	TARGET_SUFFIX=$(CONFIG_TARGET_SUFFIX) \
 	GCC_VERSION=$(GCC_VERSION) \
-	EXTRA_CFLAGS=-fno-stack-protector -I$(STAGING_DIR)/usr/include \
+	EXTRA_CFLAGS="-fno-stack-protector -I$(STAGING_DIR)/usr/include" \
+	SHELL="$(BASH)" \
 	$(LNX_CONFIG_OPTS)
 
 ifeq ($(CONFIG_TARGET_BOARD), "ipq807x")
     MAKE_FLAGS+= CHIP_TYPE=HPPE PTP_FEATURE=disable SWCONFIG_FEATURE=disable
+else ifeq ($(CONFIG_TARGET_BOARD), "ipq806x")
+    MAKE_FLAGS+= CHIP_TYPE=NONHK_CHIP HK_CHIP=enable PTP_FEATURE=disable \
+		IN_QCA808X_PHY=TRUE HNAT_FEATURE=disable SWCONFIG_FEATURE=enable
 endif
 
 define Build/InstallDev
@@ -74,6 +78,9 @@ define Build/InstallDev
 	fi
 	if [ -f $(PKG_BUILD_DIR)/include/init/ssdk_init.h ]; then \
 	$(CP) -rf $(PKG_BUILD_DIR)/include/init/ssdk_init.h $(1)/usr/include/qca-ssdk/init/; \
+	fi
+	if [ -f $(PKG_BUILD_DIR)/include/init/ssdk_netlink.h ]; then \
+	$(CP) -rf $(PKG_BUILD_DIR)/include/init/ssdk_netlink.h $(1)/usr/include/qca-ssdk/init/; \
 	fi
 	$(CP) -rf $(PKG_BUILD_DIR)/include/fal $(1)/usr/include/qca-ssdk
 	$(CP) -rf $(PKG_BUILD_DIR)/include/common/*.h $(1)/usr/include/qca-ssdk
