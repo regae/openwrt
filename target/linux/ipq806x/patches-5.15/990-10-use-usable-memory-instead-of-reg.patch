@@ -1,0 +1,10 @@
+--- a/arch/arm/boot/dts/qcom-ipq8064.dtsi
++++ b/arch/arm/boot/dts/qcom-ipq8064.dtsi
+@@ -406,6 +406,7 @@
+ 
+ 	memory {
+ 		device_type = "memory";
++		linux,usable-memory = <0x40000000 0x38000000>;
+ 		reg = <0x0 0x0>;
+ 	};
+ 
