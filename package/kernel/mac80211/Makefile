@@ -55,6 +55,7 @@ config_package=$(if $(CONFIG_PACKAGE_kmod-$(1)),m)
 config-y:= \
 	WLAN \
 	CFG80211_CERTIFICATION_ONUS \
+	MAC80211_NSS_SUPPORT \
 	MAC80211_RC_MINSTREL \
 	MAC80211_RC_MINSTREL_HT \
 	MAC80211_RC_MINSTREL_VHT \
@@ -123,7 +124,7 @@ define KernelPackage/mac80211
   $(call KernelPackage/mac80211/Default)
   TITLE:=Linux 802.11 Wireless Networking Stack
   # +kmod-crypto-cmac is a runtime only dependency of net/mac80211/aes_cmac.c
-  DEPENDS+= +kmod-cfg80211 +kmod-crypto-cmac +kmod-crypto-ccm +kmod-crypto-gcm +hostapd-common
+  DEPENDS+= +kmod-cfg80211 +kmod-crypto-cmac +kmod-crypto-ccm +kmod-crypto-gcm +kmod-qca-nss-drv +hostapd-common
   KCONFIG:=\
 	CONFIG_AVERAGE=y
   FILES:= $(PKG_BUILD_DIR)/net/mac80211/mac80211.ko
@@ -277,7 +278,7 @@ endif
 
 MAKE_OPTS:= \
 	$(subst -C $(LINUX_DIR),-C "$(PKG_BUILD_DIR)",$(KERNEL_MAKEOPTS)) \
-	EXTRA_CFLAGS="-I$(PKG_BUILD_DIR)/include $(IREMAP_CFLAGS) $(C_DEFINES)" \
+	EXTRA_CFLAGS="-I$(PKG_BUILD_DIR)/include $(IREMAP_CFLAGS) $(C_DEFINES) -I$(STAGING_DIR)/usr/include/qca-nss-drv" \
 	KLIB_BUILD="$(LINUX_DIR)" \
 	MODPROBE=true \
 	KLIB=$(TARGET_MODULES_DIR) \
@@ -344,6 +345,7 @@ define Build/Patch
 	$(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/mwl,mwl/)
 	$(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/brcm,brcm/)
 	$(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/rtl,rtl/)
+	$(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/qca,qca/)
 	$(if $(QUILT),touch $(PKG_BUILD_DIR)/.quilt_used)
 endef
 
@@ -360,6 +362,7 @@ define Quilt/Refresh/Package
 	$(call Quilt/RefreshDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/mwl,mwl/)
 	$(call Quilt/RefreshDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/brcm,brcm/)
 	$(call Quilt/RefreshDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/rtl,rtl/)
+	$(call Quilt/RefreshDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/qca,qca/)
 endef
 
 define Build/Compile
