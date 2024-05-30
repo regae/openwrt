@@ -65,7 +65,7 @@ Subject: SoC: add qualcomm syscon
 +		return PTR_ERR(base);
 +
 +	if (!of_property_read_u32(node, "qcom,usb-ctrl-select", &val)) {
-+		dev_err(&pdev->dev, "setting usb port select = %d\n", val);
++		dev_info(&pdev->dev, "setting usb port select = %d\n", val);
 +		writel(val, base + TCSR_USB_PORT_SEL);
 +	}
 +
