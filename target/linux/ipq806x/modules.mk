@@ -43,3 +43,41 @@ define KernelPackage/sound-soc-ipq8064-storm/description
 endef
 
 $(eval $(call KernelPackage,sound-soc-ipq8064-storm))
+
+
+define KernelPackage/stmmac
+  SUBMENU:=Network Devices
+  TITLE:=STMicroelectronics Multi-Gigabit Ethernet driver
+  DEPENDS:=+kmod-phylink
+  KCONFIG:= \
+	CONFIG_PHYLINK=y \
+	CONFIG_STMMAC_ETH \
+	CONFIG_STMMAC_PLATFORM \
+	CONFIG_STMMAC_SELFTESTS=n
+  FILES:= \
+	$(LINUX_DIR)/drivers/net/ethernet/stmicro/stmmac/stmmac.ko \
+	$(LINUX_DIR)/drivers/net/ethernet/stmicro/stmmac/stmmac-platform.ko
+  AUTOLOAD:=$(call AutoLoad,10,stmmac)
+endef
+
+define KernelPackage/stmmac/description
+  Driver for the Ethernet IPs built around a Synopsys IP Core.
+endef
+
+$(eval $(call KernelPackage,stmmac))
+
+
+define KernelPackage/dwmac-ipq806x
+  SUBMENU:=Network Devices
+  TITLE:=IPQ806x dwmac support
+  DEPENDS:=+kmod-stmmac
+  KCONFIG:=CONFIG_DWMAC_IPQ806X
+  FILES:=$(LINUX_DIR)/drivers/net/ethernet/stmicro/stmmac/dwmac-ipq806x.ko
+  AUTOLOAD:=$(call AutoLoad,15,dwmac-ipq806x)
+endef
+
+define KernelPackage/dwmac-ipq806x/description
+  Support for Ethernet controller on IPQ806x SoC.
+endef
+
+$(eval $(call KernelPackage,dwmac-ipq806x))
