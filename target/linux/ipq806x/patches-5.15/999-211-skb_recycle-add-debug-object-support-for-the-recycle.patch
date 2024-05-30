@@ -1,0 +1,59 @@
+From 72331a6c9b6afae9f83dd2c20efd90b136b64ab6 Mon Sep 17 00:00:00 2001
+From: Tian Yang <tiany@codeaurora.org>
+Date: Tue, 22 Sep 2015 13:23:40 -0500
+Subject: [PATCH] skb_recycle: add debug object support for the recycler
+
+Enable the same debug object bits for the skb recycler to
+assist with use after free
+
+Change-Id: I74979f504287f7f9ee60966a224e832e39bc4d89
+Signed-off-by: Matthew McClintock <mmcclint@codeaurora.org>
+Signed-off-by: Casey Chen <kexinc@codeaurora.org>
+---
+ net/core/skbuff_recycle.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+--- a/net/core/skbuff_recycle.c
++++ b/net/core/skbuff_recycle.c
+@@ -18,6 +18,8 @@
+ #include <linux/proc_fs.h>
+ #include <linux/string.h>
+ 
++#include "skbuff_debug.h"
++
+ static struct proc_dir_entry *proc_net_skbrecycler;
+ 
+ static DEFINE_PER_CPU(struct sk_buff_head, recycle_list);
+@@ -88,6 +90,8 @@ inline struct sk_buff *skb_recycler_allo
+ 
+ 		if (dev)
+ 			skb->dev = dev;
++
++		skbuff_debugobj_activate(skb);
+ 	}
+ 
+ 	return skb;
+@@ -111,6 +115,7 @@ inline bool skb_recycler_consume(struct
+ 	/* Attempt to enqueue the CPU hot recycle list first */
+ 	if (likely(skb_queue_len(h) < skb_recycle_max_skbs)) {
+ 		__skb_queue_head(h, skb);
++		skbuff_debugobj_deactivate(skb);
+ 		local_irq_restore(flags);
+ 		preempt_enable();
+ 		return true;
+@@ -142,6 +147,7 @@ inline bool skb_recycler_consume(struct
+ 			 * Initialize and enqueue skb into spare
+ 			 */
+ 			__skb_queue_head(h, skb);
++			skbuff_debugobj_deactivate(skb);
+ 
+ 			local_irq_restore(flags);
+ 			preempt_enable();
+@@ -152,6 +158,7 @@ inline bool skb_recycler_consume(struct
+ 	} else {
+ 		/* We have room in the spare list; enqueue to spare list */
+ 		__skb_queue_head(h, skb);
++		skbuff_debugobj_deactivate(skb);
+ 		local_irq_restore(flags);
+ 		preempt_enable();
+ 		return true;

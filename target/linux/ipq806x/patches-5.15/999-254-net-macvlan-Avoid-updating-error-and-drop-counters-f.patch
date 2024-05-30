@@ -1,0 +1,27 @@
+From ebc4d5485d1bf704746c4b8d6a0ac13c27180fe0 Mon Sep 17 00:00:00 2001
+From: Suman Ghosh <sumaghos@codeaurora.org>
+Date: Mon, 1 Mar 2021 16:01:14 +0530
+Subject: [PATCH] net: macvlan: Avoid updating error and drop counters for
+ offloaded statistics.
+
+Signed-off-by: Suman Ghosh <sumaghos@codeaurora.org>
+Change-Id: Ibb7f3f5a0e73cda140adee2c1640af03c698f6e6
+---
+ drivers/net/macvlan.c | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+--- a/drivers/net/macvlan.c
++++ b/drivers/net/macvlan.c
+@@ -951,11 +951,9 @@ static void macvlan_dev_update_stats(str
+ 	stats->tx_bytes += offl_stats->tx_bytes;
+ 	/* Update multicast statistics */
+ 	if (unlikely(update_mcast_rx_stats)) {
+-		stats->rx_multicast = offl_stats->rx_packets;
++		stats->rx_multicast += offl_stats->rx_packets;
+ 	}
+ 	u64_stats_update_end(&stats->syncp);
+-	stats->rx_errors = offl_stats->rx_errors;
+-	stats->tx_dropped = offl_stats->tx_dropped;
+ }
+ 
+ static void macvlan_dev_get_stats64(struct net_device *dev,

@@ -1,0 +1,82 @@
+From 67360604cd06d8e1d69350e50103d16373f3b4f7 Mon Sep 17 00:00:00 2001
+From: Apoorv Gupta <apoogupt@codeaurora.org>
+Date: Tue, 21 May 2019 09:49:16 -0700
+Subject: [PATCH] net: vxlan: Added vxlan fdb notify chain
+
+Registered modules are notified based on following events:
+
+1. RTM_GETNEIGH
+2. RTM_NEWNEIGH
+3. RTM_DELNEIGH
+
+Change-Id: I0802b305a829800cafbabd4728c3c47ff3679938
+Signed-off-by: Cemil Coskun <ccoskun@codeaurora.org>
+Signed-off-by: Apoorv Gupta <apoogupt@codeaurora.org>
+---
+ drivers/net/vxlan/vxlan_core.c | 19 +++++++++++++++++++
+ include/net/vxlan.h | 12 ++++++++++++
+ 2 files changed, 31 insertions(+)
+
+--- a/drivers/net/vxlan/vxlan_core.c
++++ b/drivers/net/vxlan/vxlan_core.c
+@@ -90,6 +90,20 @@ struct vxlan_fdb {
+ /* salt for hash table */
+ static u32 vxlan_salt __read_mostly;
+ 
++ATOMIC_NOTIFIER_HEAD(vxlan_fdb_notifier_list);
++
++void vxlan_fdb_register_notify(struct notifier_block *nb)
++{
++	atomic_notifier_chain_register(&vxlan_fdb_notifier_list, nb);
++}
++EXPORT_SYMBOL(vxlan_fdb_register_notify);
++
++void vxlan_fdb_unregister_notify(struct notifier_block *nb)
++{
++	atomic_notifier_chain_unregister(&vxlan_fdb_notifier_list, nb);
++}
++EXPORT_SYMBOL(vxlan_fdb_unregister_notify);
++
+ static inline bool vxlan_collect_metadata(struct vxlan_sock *vs)
+ {
+ 	return vs->flags & VXLAN_F_COLLECT_METADATA ||
+@@ -367,6 +381,7 @@ static void __vxlan_fdb_notify(struct vx
+ {
+ 	struct net *net = dev_net(vxlan->dev);
+ 	struct sk_buff *skb;
++	struct vxlan_fdb_event vfe;
+ 	int err = -ENOBUFS;
+ 
+ 	skb = nlmsg_new(vxlan_nlmsg_size(), GFP_ATOMIC);
+@@ -382,6 +397,10 @@ static void __vxlan_fdb_notify(struct vx
+ 	}
+ 
+ 	rtnl_notify(skb, net, 0, RTNLGRP_NEIGH, NULL, GFP_ATOMIC);
++	vfe.dev = vxlan->dev;
++	vfe.rdst = rd;
++	ether_addr_copy(vfe.eth_addr, fdb->eth_addr);
++	atomic_notifier_call_chain(&vxlan_fdb_notifier_list, type, (void *)&vfe);
+ 	return;
+ errout:
+ 	if (err < 0)
+--- a/include/net/vxlan.h
++++ b/include/net/vxlan.h
+@@ -293,6 +293,18 @@ struct vxlan_dev {
+ 					 VXLAN_F_UDP_ZERO_CSUM6_RX |	\
+ 					 VXLAN_F_COLLECT_METADATA)
+ 
++/*
++ * Application data for fdb notifier event
++ */
++struct vxlan_fdb_event {
++	struct net_device *dev;
++	struct vxlan_rdst *rdst;
++	u8 eth_addr[ETH_ALEN];
++};
++
++extern void vxlan_fdb_register_notify(struct notifier_block *nb);
++extern void vxlan_fdb_unregister_notify(struct notifier_block *nb);
++
+ struct net_device *vxlan_dev_create(struct net *net, const char *name,
+ 				    u8 name_assign_type, struct vxlan_config *conf);
+ 

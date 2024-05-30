@@ -1,0 +1,35 @@
+From 6d44ae8c819254f9bc759b4075c038e571044a62 Mon Sep 17 00:00:00 2001
+From: Tian Yang <tiany@codeaurora.org>
+Date: Wed, 15 Nov 2017 14:43:49 -0800
+Subject: [PATCH] skb_recycler: Add more checks on reusing fragmented skb
+
+In case skb->data_len is zero but fragments still there
+
+Change-Id: I5d932613e38b83dec05681464ae3bdd88c8cd070
+Signed-off-by: Casey Chen <kexinc@codeaurora.org>
+---
+ net/core/skbuff_recycle.h | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+--- a/net/core/skbuff_recycle.h
++++ b/net/core/skbuff_recycle.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
++ * Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+  *
+  * Permission to use, copy, modify, and/or distribute this software for any
+  * purpose with or without fee is hereby granted, provided that the above
+@@ -130,6 +130,12 @@ static inline bool consume_skb_can_recyc
+ 	if (unlikely(skb_is_nonlinear(skb)))
+ 		return false;
+ 
++	if (unlikely(skb_shinfo(skb)->frag_list))
++		return false;
++
++	if (unlikely(skb_shinfo(skb)->nr_frags))
++		return false;
++
+ 	if (unlikely(skb->fclone != SKB_FCLONE_UNAVAILABLE))
+ 		return false;
+ 

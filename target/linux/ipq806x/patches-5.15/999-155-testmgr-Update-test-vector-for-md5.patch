@@ -1,0 +1,36 @@
+From 40b7afaaeb401b7bbdececf3b1df02b2c2640c76 Mon Sep 17 00:00:00 2001
+From: Pavithra R <pavir@codeaurora.org>
+Date: Thu, 9 Aug 2018 21:48:44 +0530
+Subject: [PATCH] [testmgr] Update test vector for md5
+
+NSS crypto does not support authentication key size greater than hash
+algorithm block size in case of HMAC mode. So, the test vectors with
+authentication key size greater than block size are under an if check.
+
+Change-Id: I93087d1589bcab8708512b0dc57112b43918a921
+Signed-off-by: Pavithra R <pavir@codeaurora.org>
+---
+ crypto/testmgr.h | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+--- a/crypto/testmgr.h
++++ b/crypto/testmgr.h
+@@ -5587,7 +5587,9 @@ static const struct hash_testvec hmac_md
+ 		.psize	= 20,
+ 		.digest	= "\x56\x46\x1e\xf2\x34\x2e\xdc\x00"
+ 			  "\xf9\xba\xb9\x95\x69\x0e\xfd\x4c",
+-	}, {
++	},
++#ifndef CONFIG_CRYPTO_DISABLE_AHASH_LARGE_KEY_TEST
++	{
+ 		.key	= "\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa"
+ 			"\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa"
+ 			"\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa"
+@@ -5615,6 +5617,7 @@ static const struct hash_testvec hmac_md
+ 		.digest	= "\x6f\x63\x0f\xad\x67\xcd\xa0\xee"
+ 			  "\x1f\xb1\xf5\x62\xdb\x3a\xa5\x3e",
+ 	},
++#endif
+ };
+ 
+ /*

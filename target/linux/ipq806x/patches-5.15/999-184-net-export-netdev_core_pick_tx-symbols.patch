@@ -1,0 +1,23 @@
+From 249884cd619e546feb607dfc9bba0d6b45678930 Mon Sep 17 00:00:00 2001
+From: Ken Zhu <quic_guigenz@quicinc.com>
+Date: Mon, 22 Nov 2021 11:15:01 -0800
+Subject: [PATCH] net: export netdev_core_pick_tx symbols
+
+export netdev_core_pick_tx symbol
+
+Change-Id: Ie475c0aa04b1c85717e8da6903e27c5d3068fc10
+Signed-off-by: Ken Zhu <quic_guigenz@quicinc.com>
+---
+ net/core/dev.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -4137,6 +4137,7 @@ struct netdev_queue *netdev_core_pick_tx
+ 	skb_set_queue_mapping(skb, queue_index);
+ 	return netdev_get_tx_queue(dev, queue_index);
+ }
++EXPORT_SYMBOL(netdev_core_pick_tx);
+ 
+ /**
+  *	__dev_queue_xmit - transmit a buffer

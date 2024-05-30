@@ -1,0 +1,27 @@
+From b2ac3909d89b70486f0b2a3487c220d4a77eeee0 Mon Sep 17 00:00:00 2001
+From: Tian Yang <tiany@codeaurora.org>
+Date: Mon, 14 Nov 2016 22:42:51 -0600
+Subject: [PATCH] Don't consume PFMEMALLOC SKBs
+
+If an SKB is allocated from PFMEMALLOC reserves, memory management is
+done differently for it. Avoid recycling it.
+
+Change-Id: Id395b3f414a3afe85dfe85c06b7c2e55f199ae64
+Signed-off-by: Cristian Prundeanu <cprundea@codeaurora.org>
+Signed-off-by: Casey Chen <kexinc@codeaurora.org>
+---
+ net/core/skbuff_recycle.h | 3 +++
+ 1 file changed, 3 insertions(+)
+
+--- a/net/core/skbuff_recycle.h
++++ b/net/core/skbuff_recycle.h
+@@ -144,6 +144,9 @@ static inline bool consume_skb_can_recyc
+ 	if (unlikely(skb_cloned(skb)))
+ 		return false;
+ 
++	if (unlikely(skb_pfmemalloc(skb)))
++		return false;
++
+ 	return true;
+ }
+ 

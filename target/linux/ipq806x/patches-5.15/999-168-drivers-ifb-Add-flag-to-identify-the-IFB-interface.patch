@@ -1,0 +1,48 @@
+From 8df7f477c907d53b527550a5e4ed19caaf3f0e8c Mon Sep 17 00:00:00 2001
+From: Manish Verma <maniverm@codeaurora.org>
+Date: Wed, 15 May 2019 12:35:34 +0530
+Subject: [PATCH] drivers: ifb: Add flag to identify the IFB interface.
+
+Add IFB flag in netdevice's ext priv flags and define an API
+to let other modules find out if the netdev is IFB or not.
+
+Change-Id: I6dbdae521240b4a991069c2330d893ff38aec68d
+Signed-off-by: Manish Verma <maniverm@codeaurora.org>
+Signed-off-by: pavir <pavir@codeaurora.org>
+---
+ drivers/net/ifb.c         | 1 +
+ include/linux/netdevice.h | 6 ++++++
+ 2 files changed, 7 insertions(+)
+
+--- a/drivers/net/ifb.c
++++ b/drivers/net/ifb.c
+@@ -249,6 +249,7 @@ static void ifb_setup(struct net_device
+ 	dev->flags |= IFF_NOARP;
+ 	dev->flags &= ~IFF_MULTICAST;
+ 	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
++	dev->priv_flags_ext |= IFF_EXT_IFB;	/* Mark the device as an IFB device. */
+ 	netif_keep_dst(dev);
+ 	eth_hw_addr_random(dev);
+ 	dev->needs_free_netdev = true;
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -1698,6 +1698,7 @@ enum netdev_extra_priv_flags {
+  * @IFF_EXT_PPP_PPTP: device is a PPTP device
+  * @IFF_EXT_GRE_V4_TAP: device is a GRE IPv4 TAP device
+  * @IFF_EXT_GRE_V6_TAP: device is a GRE IPv6 TAP device
++ * @IFF_EXT_IFB: device is an IFB device
+  */
+ enum netdev_priv_flags_ext {
+ 	IFF_EXT_TUN_TAP			= 1<<0,
+@@ -5328,6 +5329,11 @@ static inline bool netif_is_failover_sla
+ 	return dev->priv_flags & IFF_FAILOVER_SLAVE;
+ }
+ 
++static inline bool netif_is_ifb_dev(const struct net_device *dev)
++{
++	return dev->priv_flags_ext & IFF_EXT_IFB;
++}
++
+ /* This device needs to keep skb dst for qdisc enqueue or ndo_start_xmit() */
+ static inline void netif_keep_dst(struct net_device *dev)
+ {

@@ -1,0 +1,69 @@
+From 4874d11a41ddda991d8262879940b127d5fdab25 Mon Sep 17 00:00:00 2001
+From: Apoorv Gupta <apoogupt@codeaurora.org>
+Date: Wed, 4 Sep 2019 16:46:40 +0530
+Subject: [PATCH] net: vxlan: Adding APIs to VxLAN driver.
+
+Adding new APIs to verify VxLAN netdevice and
+update mac entries in VxLAN's fdb.
+
+Change-Id: I22962d4845cba3a258c095f6424557a29d3b354b
+Signed-off-by: Apoorv Gupta <apoogupt@codeaurora.org>
+---
+ drivers/net/vxlan/vxlan_core.c | 12 ++++++++++++
+ include/net/vxlan.h | 17 +++++++++++++++++
+ 2 files changed, 29 insertions(+)
+
+--- a/drivers/net/vxlan/vxlan_core.c
++++ b/drivers/net/vxlan/vxlan_core.c
+@@ -567,6 +567,18 @@ static struct vxlan_fdb *vxlan_find_mac(
+ 	return f;
+ }
+ 
++/* Find and update age of fdb entry corresponding to MAC. */
++void vxlan_fdb_update_mac(struct vxlan_dev *vxlan, const u8 *mac, uint32_t vni)
++{
++	u32 hash_index;
++
++	hash_index = fdb_head_index(vxlan, mac, vni);
++	spin_lock_bh(&vxlan->hash_lock[hash_index]);
++	vxlan_find_mac(vxlan, mac, vni);
++	spin_unlock_bh(&vxlan->hash_lock[hash_index]);
++}
++EXPORT_SYMBOL(vxlan_fdb_update_mac);
++
+ /* caller should hold vxlan->hash_lock */
+ static struct vxlan_rdst *vxlan_fdb_find_rdst(struct vxlan_fdb *f,
+ 					      union vxlan_addr *ip, __be16 port,
+--- a/include/net/vxlan.h
++++ b/include/net/vxlan.h
+@@ -304,6 +304,7 @@ struct vxlan_fdb_event {
+ 
+ extern void vxlan_fdb_register_notify(struct notifier_block *nb);
+ extern void vxlan_fdb_unregister_notify(struct notifier_block *nb);
++extern void vxlan_fdb_update_mac(struct vxlan_dev *vxlan, const u8 *mac, uint32_t vni);
+ 
+ struct net_device *vxlan_dev_create(struct net *net, const char *name,
+ 				    u8 name_assign_type, struct vxlan_config *conf);
+@@ -393,6 +394,22 @@ static inline __be32 vxlan_compute_rco(u
+ 	return vni_field;
+ }
+ 
++/*
++ * is_vxlan_dev()
++ *	Check if it is a VxLAN netdevice.
++ */
++static inline bool is_vxlan_dev(const struct net_device *dev)
++{
++	if (!dev)
++		return false;
++
++	if ((dev->dev.type) &&
++		!strncmp(dev->dev.type->name, "vxlan", sizeof("vxlan"))) {
++		return true;
++	}
++	return false;
++}
++
+ static inline unsigned short vxlan_get_sk_family(struct vxlan_sock *vs)
+ {
+ 	return vs->sock->sk->sk_family;

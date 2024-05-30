@@ -1,0 +1,67 @@
+From 451eb8c6d808debb70bdb2fc75d39404673dc1f7 Mon Sep 17 00:00:00 2001
+From: Pavithra R <pavir@codeaurora.org>
+Date: Mon, 24 Jun 2019 12:38:17 +0530
+Subject: [PATCH] drivers: ifb: API to update the IFB device stats.
+
+Add an API to update the IFB device stats, which will be
+used by accelerator stats callback for updating its stats.
+
+Change-Id: I5ca395cbcbd9a5e0dde162d2727eb54f51a19cf8
+Signed-off-by: Pavithra R <pavir@codeaurora.org>
+---
+ drivers/net/ifb.c         | 25 +++++++++++++++++++++++++
+ include/linux/netdevice.h |  9 +++++++++
+ 2 files changed, 34 insertions(+)
+
+--- a/drivers/net/ifb.c
++++ b/drivers/net/ifb.c
+@@ -125,6 +125,31 @@ resched:
+ 
+ }
+ 
++void ifb_update_offload_stats(struct net_device *dev, struct pcpu_sw_netstats *offload_stats)
++{
++	struct ifb_dev_private *dp;
++	struct ifb_q_private *txp;
++
++	if (!dev || !offload_stats) {
++		return;
++	}
++
++	if (!(dev->priv_flags_ext & IFF_EXT_IFB)) {
++		return;
++	}
++
++	dp = netdev_priv(dev);
++	txp = dp->tx_private;
++
++	u64_stats_update_begin(&txp->rsync);
++	txp->rx_packets += offload_stats->rx_packets;
++	txp->rx_bytes += offload_stats->rx_bytes;
++	txp->tx_packets += offload_stats->tx_packets;
++	txp->tx_bytes += offload_stats->tx_bytes;
++	u64_stats_update_end(&txp->rsync);
++}
++EXPORT_SYMBOL(ifb_update_offload_stats);
++
+ static void ifb_stats64(struct net_device *dev,
+ 			struct rtnl_link_stats64 *stats)
+ {
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -4761,6 +4761,15 @@ void dev_uc_flush(struct net_device *dev
+ void dev_uc_init(struct net_device *dev);
+ 
+ /**
++ *  ifb_update_offload_stats - Update the IFB interface stats
++ *  @dev: IFB device to update the stats
++ *  @offload_stats: per CPU stats structure
++ *
++ *  Allows update of IFB stats when flows are offloaded to an accelerator.
++ **/
++void ifb_update_offload_stats(struct net_device *dev, struct pcpu_sw_netstats *offload_stats);
++
++/**
+  *  __dev_uc_sync - Synchonize device's unicast list
+  *  @dev:  device to sync
+  *  @sync: function to call if address should be added

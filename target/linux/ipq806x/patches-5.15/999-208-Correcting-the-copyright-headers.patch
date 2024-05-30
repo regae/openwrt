@@ -1,0 +1,69 @@
+From 343385ae18643230b491d38cb8f44f4f4117770e Mon Sep 17 00:00:00 2001
+From: Tian Yang <tiany@codeaurora.org>
+Date: Wed, 15 Apr 2020 09:42:27 -0700
+Subject: [PATCH] Correcting the copyright headers
+
+Change-Id: I8784181630a2c4f2b6917e2ac8a504dad1c4dc37
+Signed-off-by: Pamidipati, Vijay <vpamidip@codeaurora.org>
+Signed-off-by: Casey Chen <kexinc@codeaurora.org>
+---
+ net/core/skbuff_recycle.c | 16 +++++++++++-----
+ net/core/skbuff_recycle.h | 18 ++++++++++++------
+ 2 files changed, 23 insertions(+), 11 deletions(-)
+
+--- a/net/core/skbuff_recycle.c
++++ b/net/core/skbuff_recycle.c
+@@ -1,13 +1,19 @@
+ /*
+  * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+  *
+- *      Generic skb recycler
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
+  *
+- *      This program is free software; you can redistribute it and/or
+- *      modify it under the terms of the GNU General Public License
+- *      as published by the Free Software Foundation; either version
+- *      2 of the License, or (at your option) any later version.
++ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
++ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
++ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
++ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
++ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
++ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
++ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+  */
++/* Generic skb recycler */
+ #include "skbuff_recycle.h"
+ 
+ static DEFINE_PER_CPU(struct sk_buff_head, recycle_list);
+--- a/net/core/skbuff_recycle.h
++++ b/net/core/skbuff_recycle.h
+@@ -1,14 +1,20 @@
+ /*
+  * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+  *
+- *      Definitions for the skb recycler functions
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
++ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
++ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
++ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
++ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
++ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
++ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+  *
+- *      This program is free software; you can redistribute it and/or
+- *      modify it under the terms of the GNU General Public License
+- *      as published by the Free Software Foundation; either version
+- *      2 of the License, or (at your option) any later version.
+  */
+-
++/* Definitions for the skb recycler functions */
+ #ifndef _LINUX_SKBUFF_RECYCLE_H
+ #define _LINUX_SKBUFF_RECYCLE_H
+ 

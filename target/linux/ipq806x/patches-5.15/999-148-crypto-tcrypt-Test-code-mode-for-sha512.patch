@@ -1,0 +1,24 @@
+From 0f899294914ef3afb81c5121bf114dbc6c9f2c58 Mon Sep 17 00:00:00 2001
+From: Pavithra R <pavir@codeaurora.org>
+Date: Tue, 19 Feb 2019 12:58:10 +0530
+Subject: [PATCH] crypto: tcrypt: Test code mode for sha512
+
+Change-Id: I80b7a3de74227b1b1a301efb1a194ca906e0b082
+Signed-off-by: Pavithra R <pavir@codeaurora.org>
+---
+ crypto/tcrypt.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+--- a/crypto/tcrypt.c
++++ b/crypto/tcrypt.c
+@@ -2050,6 +2050,10 @@ static int do_test(const char *alg, u32
+ 		ret += tcrypt_test("ctr(sm4)");
+ 		break;
+ 
++	case 192:
++		ret += tcrypt_test("authenc(hmac(sha512),cbc(aes))");
++		break;
++
+ 	case 193:
+ 		ret += tcrypt_test("authenc(hmac(sha384),cbc(aes))");
+ 		break;

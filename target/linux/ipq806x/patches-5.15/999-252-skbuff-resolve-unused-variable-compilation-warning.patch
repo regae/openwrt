@@ -1,0 +1,40 @@
+From 8508eedf932bc8486e4cc680f3666c6cb89433f0 Mon Sep 17 00:00:00 2001
+From: Tian Yang <tiany@codeaurora.org>
+Date: Wed, 3 Feb 2021 14:38:35 -0800
+Subject: [PATCH] skbuff: resolve unused variable compilation warning
+
+Remove the unused local variable declaration to address the compilation warning.
+
+Signed-off-by: Tian Yang <tiany@codeaurora.org>
+Change-Id: Ia722f9aa9031a868e4f9625146cbb7ba5fe7b125
+---
+ net/core/skbuff.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -485,12 +485,7 @@ EXPORT_SYMBOL(__alloc_skb);
+ struct sk_buff *__netdev_alloc_skb(struct net_device *dev,
+ 				   unsigned int length, gfp_t gfp_mask)
+ {
+-	struct page_frag_cache *nc;
+ 	struct sk_buff *skb;
+-	bool pfmemalloc;
+-	bool page_frag_alloc_enable = true;
+-	void *data;
+-
+ 	unsigned int len = length;
+ 
+ #ifdef CONFIG_SKB_RECYCLER
+@@ -521,6 +516,11 @@ struct sk_buff *__netdev_alloc_skb(struc
+ 
+ 	goto skb_success;
+ #else
++	struct page_frag_cache *nc;
++	bool pfmemalloc;
++	bool page_frag_alloc_enable = true;
++	void *data;
++
+ 	len += NET_SKB_PAD;
+ 
+ 	/* If requested length is either too small or too big,
