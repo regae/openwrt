@@ -88,3 +88,14 @@
  
  	qca_ar8327_phy_read(0, phy_addr, reg_addr, &phy_reg_val);
  
+--- a/src/init/ssdk_clk.c
++++ b/src/init/ssdk_clk.c
+@@ -35,7 +35,7 @@
+ #include <linux/clk-provider.h>
+ #include <linux/clkdev.h>
+ #endif
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5,4,0))
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5,4,0))
+ #include <soc/qcom/socinfo.h>
+ #endif
+ 
