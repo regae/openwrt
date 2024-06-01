@@ -1,6 +1,6 @@
 --- a/nss_core.c
 +++ b/nss_core.c
-@@ -506,6 +506,7 @@ static void nss_get_ddr_info(struct nss_mmu_ddr_info *mmu, char *name)
+@@ -505,6 +505,7 @@ static void nss_get_ddr_info(struct nss_mmu_ddr_info *mmu, char *name)
  	long cached;
  	struct sysinfo vals;
  	struct device_node *node;
@@ -8,7 +8,7 @@
  
  	si_meminfo(&vals);
  #if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 5, 0))
-@@ -528,7 +529,10 @@ static void nss_get_ddr_info(struct nss_mmu_ddr_info *mmu, char *name)
+@@ -527,7 +528,10 @@ static void nss_get_ddr_info(struct nss_mmu_ddr_info *mmu, char *name)
  	if (node) {
  		int isize = 0;
  		int n_items;

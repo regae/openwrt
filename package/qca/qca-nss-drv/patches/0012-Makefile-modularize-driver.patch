@@ -171,21 +171,6 @@
  ccflags-y += -I$(obj)/nss_data_plane/hal/include
  ccflags-y += -DNSS_PM_DEBUG_LEVEL=0 -DNSS_SKB_REUSE_SUPPORT=1
  ccflags-y += -Wall -Werror
-@@ -510,7 +560,14 @@ NSS_CCFLAGS = -DNSS_DT_SUPPORT=1 -DNSS_F
- ccflags-y += -I$(obj)
- endif
- 
-+# Fabric scaling is supported in 3.14 and 4.4 only
-+ifneq ($(findstring 3.14, $(KERNELVERSION)),)
-+NSS_CCFLAGS += -DNSS_FABRIC_SCALING_SUPPORT=1
-+else ifneq ($(findstring 4.4, $(KERNELVERSION)),)
-+NSS_CCFLAGS += -DNSS_FABRIC_SCALING_SUPPORT=1
-+else
- NSS_CCFLAGS += -DNSS_FABRIC_SCALING_SUPPORT=0
-+endif
- 
- # Disable Frequency scaling
- ifeq "$(NSS_FREQ_SCALE_DISABLE)" "y"
 --- a/nss_init.c
 +++ b/nss_init.c
 @@ -880,6 +880,13 @@ static int __init nss_init(void)
