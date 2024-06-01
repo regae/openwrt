@@ -562,7 +562,7 @@
  
 --- a/nss_core.c
 +++ b/nss_core.c
-@@ -522,7 +522,7 @@ static void nss_get_ddr_info(struct nss_
+@@ -530,7 +530,7 @@ static void nss_get_ddr_info(struct nss_
  		const __be32 *ppp = (__be32 *)of_get_property(node, "reg", &n_items);
  
  		n_items /= sizeof(ppp[0]);
@@ -571,7 +571,7 @@
  				of_n_size_cells(node), n_items);
  		if (ppp) {
  			if (n_items & 1) {	/* case 1 */
-@@ -549,7 +549,7 @@ case3:
+@@ -557,7 +557,7 @@ case3:
  				n_items = 0;
  			if (n_items) {
  				of_node_put(node);
@@ -580,7 +580,7 @@
  					name, mmu->start_address, mmu->ddr_size,
  					avail_ddr, n_items, mmu->num_active_cores);
  				/*
-@@ -886,7 +886,7 @@ static inline void nss_core_handle_buffe
+@@ -894,7 +894,7 @@ static inline void nss_core_handle_buffe
  		/*
  		 * linearize or free if requested.
  		 */
@@ -589,7 +589,7 @@
  			if (nss_core_skb_needs_linearize(nbuf, ndev->features) && __skb_linearize(nbuf)) {
  				dev_kfree_skb_any(nbuf);
  				return;
-@@ -944,11 +944,11 @@ static inline void nss_core_handle_ext_b
+@@ -952,11 +952,11 @@ static inline void nss_core_handle_ext_b
  	ext_cb = subsys_dp_reg->ext_cb;
  	if (likely(ext_cb) && likely(ndev)) {
  
@@ -604,7 +604,7 @@
  				dev_kfree_skb_any(nbuf);
  				return;
  			}
-@@ -1685,6 +1685,7 @@ static void nss_core_init_nss(struct nss
+@@ -1693,6 +1693,7 @@ static void nss_core_init_nss(struct nss
  {
  	struct nss_top_instance *nss_top;
  	int ret;
@@ -612,7 +612,7 @@
  
  	NSS_CORE_DMA_CACHE_MAINT((void *)if_map, sizeof(*if_map), DMA_FROM_DEVICE);
  	NSS_CORE_DSB();
-@@ -1700,6 +1701,9 @@ static void nss_core_init_nss(struct nss
+@@ -1708,6 +1709,9 @@ static void nss_core_init_nss(struct nss
  #ifdef NSS_DRV_C2C_ENABLE
  	nss_ctx->c2c_start = nss_ctx->meminfo_ctx.c2c_start_dma;
  #endif
@@ -622,7 +622,7 @@
  
  	nss_top = nss_ctx->nss_top;
  	spin_lock_bh(&nss_top->lock);
-@@ -1723,12 +1727,15 @@ static void nss_core_init_nss(struct nss
+@@ -1731,12 +1735,15 @@ static void nss_core_init_nss(struct nss
  		 * Configure the maximum number of IPv4/IPv6
  		 * connections supported by the accelerator.
  		 */
@@ -641,7 +641,7 @@
  
  #ifdef NSS_MEM_PROFILE_LOW
  		/*
-@@ -3014,48 +3021,52 @@ int32_t nss_core_send_buffer(struct nss_
+@@ -3022,48 +3029,52 @@ int32_t nss_core_send_buffer(struct nss_
  	 * Take a lock for queue
  	 */
  	spin_lock_bh(&h2n_desc_ring->lock);
