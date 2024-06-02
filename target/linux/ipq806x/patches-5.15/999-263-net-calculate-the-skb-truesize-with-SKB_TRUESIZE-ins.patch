@@ -17,7 +17,7 @@ Signed-off-by: Gaurao Chaudhari <quic_gaurchau@quicinc.com>
 
 --- a/net/core/skbuff.c
 +++ b/net/core/skbuff.c
-@@ -1860,7 +1860,7 @@ int pskb_expand_head(struct sk_buff *skb
+@@ -1895,7 +1895,7 @@ int pskb_expand_head(struct sk_buff *skb
  	 * when skb is orphaned (not attached to a socket).
  	 */
  	if (!skb->sk || skb->destructor == sock_edemux)
