@@ -14,31 +14,6 @@
  3C59X NETWORK DRIVER
  M:	Steffen Klassert <klassert@kernel.org>
  L:	netdev@vger.kernel.org
---- a/arch/arm/mach-qcom/Kconfig
-+++ b/arch/arm/mach-qcom/Kconfig
-@@ -33,4 +33,22 @@ config ARCH_MDM9615
- 	bool "Enable support for MDM9615"
- 	select CLKSRC_QCOM
- 
-+config IPQ_MEM_PROFILE
-+	int "Select Memory Profile"
-+	range 0 1024
-+	default 0
-+	help
-+	This option select memory profile to be used, which defines
-+	the reserved memory configuration used in device tree.
-+
-+	If unsure, say 0
-+
-+config SKB_FIXED_SIZE_2K
-+	bool "SKB size fixed at 2K"
-+	default n
-+	help
-+		This is a hint to the NSS driver that the ‘skbuff’ size might
-+		need to be fixed at 2KB, to conserve memory.
-+
-+
- endif
 --- a/include/linux/cpuhotplug.h
 +++ b/include/linux/cpuhotplug.h
 @@ -94,6 +94,7 @@ enum cpuhp_state {
@@ -1738,20 +1713,3 @@
 +#define skb_recycler_print_all_lists() false
 +#endif
 +#endif
---- a/scripts/Makefile.lib
-+++ b/scripts/Makefile.lib
-@@ -232,6 +232,14 @@ ifeq ($(CONFIG_LTO_CLANG),y)
- mod-prelink-ext := .lto
- endif
- 
-+#Add DDR profiling for different DDR size in dtsi
-+ifeq ($(CONFIG_IPQ_MEM_PROFILE),256)
-+dtc_cpp_flags += -D __IPQ_MEM_PROFILE_256_MB__
-+else ifeq ($(CONFIG_IPQ_FLASH_16M_PROFILE),y)
-+dtc_cpp_flags += -D __IPQ_MEM_PROFILE_256_MB__
-+else ifeq ($(CONFIG_IPQ_MEM_PROFILE),512)
-+dtc_cpp_flags += -D __IPQ_MEM_PROFILE_512_MB__
-+endif
- # Useful for describing the dependency of composite objects
- # Usage:
- #   $(call multi_depend, multi_used_targets, suffix_to_remove, suffix_to_add)
