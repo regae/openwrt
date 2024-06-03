@@ -1,0 +1,1757 @@
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -143,6 +143,13 @@ Maintainers List
+           first. When adding to this list, please keep the entries in
+           alphabetical order.
+ 
++SKB RECYCLER SUPPORT
++M:	Casey Chen <kexinc@codeaurora.org>
++S:	Maintained
++F:	net/core/skbuff_recycle.*
++F:	net/core/skbuff_debug.*
++F:	net/core/skbuff_notifier.*
++
+ 3C59X NETWORK DRIVER
+ M:	Steffen Klassert <klassert@kernel.org>
+ L:	netdev@vger.kernel.org
+--- a/arch/arm/mach-qcom/Kconfig
++++ b/arch/arm/mach-qcom/Kconfig
+@@ -33,4 +33,22 @@ config ARCH_MDM9615
+ 	bool "Enable support for MDM9615"
+ 	select CLKSRC_QCOM
+ 
++config IPQ_MEM_PROFILE
++	int "Select Memory Profile"
++	range 0 1024
++	default 0
++	help
++	This option select memory profile to be used, which defines
++	the reserved memory configuration used in device tree.
++
++	If unsure, say 0
++
++config SKB_FIXED_SIZE_2K
++	bool "SKB size fixed at 2K"
++	default n
++	help
++		This is a hint to the NSS driver that the ‘skbuff’ size might
++		need to be fixed at 2KB, to conserve memory.
++
++
+ endif
+--- a/include/linux/cpuhotplug.h
++++ b/include/linux/cpuhotplug.h
+@@ -94,6 +94,7 @@ enum cpuhp_state {
+ 	CPUHP_RADIX_DEAD,
+ 	CPUHP_PAGE_ALLOC,
+ 	CPUHP_NET_DEV_DEAD,
++	CPUHP_SKB_RECYCLER_DEAD,
+ 	CPUHP_PCI_XGENE_DEAD,
+ 	CPUHP_IOMMU_IOVA_DEAD,
+ 	CPUHP_LUSTRE_CFS_DEAD,
+--- a/include/linux/debugobjects.h
++++ b/include/linux/debugobjects.h
+@@ -68,6 +68,7 @@ extern void debug_object_init      (void
+ extern void
+ debug_object_init_on_stack(void *addr, const struct debug_obj_descr *descr);
+ extern int debug_object_activate  (void *addr, const struct debug_obj_descr *descr);
++extern int debug_object_get_state(void *addr);
+ extern void debug_object_deactivate(void *addr, const struct debug_obj_descr *descr);
+ extern void debug_object_destroy   (void *addr, const struct debug_obj_descr *descr);
+ extern void debug_object_free      (void *addr, const struct debug_obj_descr *descr);
+@@ -85,6 +86,7 @@ debug_object_active_state(void *addr, co
+ extern void debug_objects_early_init(void);
+ extern void debug_objects_mem_init(void);
+ #else
++static inline int debug_object_get_state(void *addr) { return 0; }
+ static inline void
+ debug_object_init      (void *addr, const struct debug_obj_descr *descr) { }
+ static inline void
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -983,6 +983,13 @@ struct sk_buff {
+ 	/* only useable after checking ->active_extensions != 0 */
+ 	struct skb_ext		*extensions;
+ #endif
++
++#ifdef CONFIG_DEBUG_OBJECTS_SKBUFF
++#define DEBUG_OBJECTS_SKBUFF_STACKSIZE	20
++	void			*free_addr[DEBUG_OBJECTS_SKBUFF_STACKSIZE];
++	void			*alloc_addr[DEBUG_OBJECTS_SKBUFF_STACKSIZE];
++	u32			sum;
++#endif
+ };
+ 
+ #ifdef __KERNEL__
+@@ -1144,6 +1151,8 @@ static inline void consume_skb(struct sk
+ void __consume_stateless_skb(struct sk_buff *skb);
+ void  __kfree_skb(struct sk_buff *skb);
+ extern struct kmem_cache *skbuff_head_cache;
++extern void kfree_skbmem(struct sk_buff *skb);
++extern void skb_release_data(struct sk_buff *skb);
+ 
+ void kfree_skb_partial(struct sk_buff *skb, bool head_stolen);
+ bool skb_try_coalesce(struct sk_buff *to, struct sk_buff *from,
+--- a/lib/Kconfig.debug
++++ b/lib/Kconfig.debug
+@@ -666,6 +666,12 @@ config DEBUG_OBJECTS_PERCPU_COUNTER
+ 	  percpu counter routines to track the life time of percpu counter
+ 	  objects and validate the percpu counter operations.
+ 
++config DEBUG_OBJECTS_SKBUFF
++	bool "Debug sk_buff allocations"
++	depends on DEBUG_OBJECTS
++	help
++	  Enable this to turn on debugging of sk_buff's (incl. recycler)
++
+ config DEBUG_OBJECTS_ENABLE_DEFAULT
+ 	int "debug_objects bootup default value (0-1)"
+ 	range 0 1
+--- a/lib/debugobjects.c
++++ b/lib/debugobjects.c
+@@ -496,6 +496,29 @@ static struct debug_bucket *get_bucket(u
+ 	return &obj_hash[hash];
+ }
+ 
++/*
++ * debug_object_get_state():
++ *   returns the state of an object given an address
++ */
++int debug_object_get_state(void *addr)
++{
++	struct debug_bucket *db;
++	struct debug_obj *obj;
++	unsigned long flags;
++	enum debug_obj_state state = ODEBUG_STATE_NOTAVAILABLE;
++
++	db = get_bucket((unsigned long) addr);
++
++	raw_spin_lock_irqsave(&db->lock, flags);
++	obj = lookup_object(addr, db);
++	if (obj)
++		state = obj->state;
++	raw_spin_unlock_irqrestore(&db->lock, flags);
++
++	return state;
++}
++EXPORT_SYMBOL(debug_object_get_state);
++
+ static void debug_print_object(struct debug_obj *obj, char *msg)
+ {
+ 	const struct debug_obj_descr *descr = obj->descr;
+--- a/net/Kconfig
++++ b/net/Kconfig
+@@ -332,6 +332,45 @@ config NET_FLOW_LIMIT
+ 	  with many clients some protection against DoS by a single (spoofed)
+ 	  flow that greatly exceeds average workload.
+ 
++config SKB_RECYCLER
++	bool "Generic skb recycling"
++	default y
++	help
++	  SKB_RECYCLER is used to implement RX-to-RX skb recycling.
++	  This config enables the recycling scheme for bridging and
++	  routing workloads. It can reduce skbuff freeing or
++	  reallocation overhead.
++
++config SKB_RECYCLER_MULTI_CPU
++	bool "Cross-CPU recycling for CPU-locked workloads"
++	depends on SMP && SKB_RECYCLER
++	default n
++
++config SKB_RECYCLER_PREALLOC
++	bool "Enable preallocation of SKBs"
++	depends on SKB_RECYCLER
++	default n
++	help
++	 Preallocates SKBs in recycling lists and the number of
++	 SKBs are configured through CONFIG_SKB_RECYCLE_MAX_PREALLOC_SKBS.
++	 This needs SKB_RECYCLER to be enabled.
++	 The number of preallocated SKBs can be passed using
++	 SKB_RECYCLE_MAX_PREALLOC_SKBS.
++
++config SKB_RECYCLE_MAX_PREALLOC_SKBS
++	int "Number of SKBs to be preallocated"
++	depends on SKB_RECYCLER_PREALLOC
++	default 16384
++	help
++	 Number of SKBs each of 4K size to be preallocated for recycling
++
++config ALLOC_SKB_PAGE_FRAG_DISABLE
++	bool "Disable page fragment based skbuff payload allocations"
++	depends on !SKB_RECYCLER
++	default n
++	help
++	 Disable page fragment based allocations for skbuff payloads.
++
+ menu "Network testing"
+ 
+ config NET_PKTGEN
+--- a/net/core/Makefile
++++ b/net/core/Makefile
+@@ -38,3 +38,5 @@ obj-$(CONFIG_NET_SOCK_MSG) += skmsg.o
+ obj-$(CONFIG_BPF_SYSCALL) += sock_map.o
+ obj-$(CONFIG_BPF_SYSCALL) += bpf_sk_storage.o
+ obj-$(CONFIG_OF)	+= of_net.o
++obj-$(CONFIG_SKB_RECYCLER) += skbuff_recycle.o
++obj-$(CONFIG_DEBUG_OBJECTS_SKBUFF) += skbuff_debug.o skbuff_notifier.o
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -152,6 +152,7 @@
+ #include <linux/once_lite.h>
+ 
+ #include "net-sysfs.h"
++#include "skbuff_debug.h"
+ 
+ #define MAX_GRO_SKBS 8
+ 
+@@ -6243,8 +6244,10 @@ static gro_result_t napi_skb_finish(stru
+ 		break;
+ 
+ 	case GRO_MERGED_FREE:
+-		if (NAPI_GRO_CB(skb)->free == NAPI_GRO_FREE_STOLEN_HEAD)
++		if (NAPI_GRO_CB(skb)->free == NAPI_GRO_FREE_STOLEN_HEAD) {
+ 			napi_skb_free_stolen_head(skb);
++			skbuff_debugobj_deactivate(skb);
++		}
+ 		else if (skb->fclone != SKB_FCLONE_UNAVAILABLE)
+ 			__kfree_skb(skb);
+ 		else
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -83,6 +83,34 @@
+ #include "datagram.h"
+ #include "sock_destructor.h"
+ 
++#include "skbuff_recycle.h"
++#include "skbuff_debug.h"
++
++struct kmem_cache *skb_data_cache;
++
++/*
++ * For low memory profile, NSS_SKB_FIXED_SIZE_2K is enabled and
++ * CONFIG_SKB_RECYCLER is disabled. For premium and enterprise profile
++ * CONFIG_SKB_RECYCLER is enabled and NSS_SKB_FIXED_SIZE_2K is disabled.
++ * Irrespective of NSS_SKB_FIXED_SIZE_2K enabled/disabled, the
++ * CONFIG_SKB_RECYCLER and __LP64__ determines the value of SKB_DATA_CACHE_SIZE
++ */
++#if defined(CONFIG_SKB_RECYCLER)
++/*
++ * 2688 for 64bit arch, 2624 for 32bit arch
++ */
++#define SKB_DATA_CACHE_SIZE (SKB_DATA_ALIGN(SKB_RECYCLE_SIZE + NET_SKB_PAD) + SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
++#else
++/*
++ * 2368 for 64bit arch, 2176 for 32bit arch
++ */
++#if defined(__LP64__)
++#define SKB_DATA_CACHE_SIZE ((SKB_DATA_ALIGN(1984 + NET_SKB_PAD)) + SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
++#else
++#define SKB_DATA_CACHE_SIZE ((SKB_DATA_ALIGN(1856 + NET_SKB_PAD)) + SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
++#endif
++#endif
++
+ struct kmem_cache *skbuff_head_cache __ro_after_init;
+ static struct kmem_cache *skbuff_fclone_cache __ro_after_init;
+ #ifdef CONFIG_SKB_EXTENSIONS
+@@ -242,6 +270,7 @@ struct sk_buff *__build_skb(void *data,
+ 	skb = kmem_cache_alloc(skbuff_head_cache, GFP_ATOMIC);
+ 	if (unlikely(!skb))
+ 		return NULL;
++	skbuff_debugobj_init_and_activate(skb);
+ 
+ 	memset(skb, 0, offsetof(struct sk_buff, tail));
+ 	__build_skb_around(skb, data, frag_size);
+@@ -354,7 +383,12 @@ static void *kmalloc_reserve(size_t size
+ 	 * Try a regular allocation, when that fails and we're not entitled
+ 	 * to the reserves, fail.
+ 	 */
+-	obj = kmalloc_node_track_caller(size,
++	if (size > SZ_2K && size <= SKB_DATA_CACHE_SIZE)
++		obj = kmem_cache_alloc_node(skb_data_cache,
++						flags | __GFP_NOMEMALLOC | __GFP_NOWARN,
++						node);
++	else
++		obj = kmalloc_node_track_caller(size,
+ 					flags | __GFP_NOMEMALLOC | __GFP_NOWARN,
+ 					node);
+ 	if (obj || !(gfp_pfmemalloc_allowed(flags)))
+@@ -362,7 +396,10 @@ static void *kmalloc_reserve(size_t size
+ 
+ 	/* Try again but now we are using pfmemalloc reserves */
+ 	ret_pfmemalloc = true;
+-	obj = kmalloc_node_track_caller(size, flags, node);
++	if (size > SZ_2K && size <= SKB_DATA_CACHE_SIZE)
++		obj = kmem_cache_alloc_node(skb_data_cache, flags, node);
++	else
++		obj = kmalloc_node_track_caller(size, flags, node);
+ 
+ out:
+ 	if (pfmemalloc)
+@@ -416,6 +453,7 @@ struct sk_buff *__alloc_skb(unsigned int
+ 		skb = kmem_cache_alloc_node(cache, gfp_mask & ~GFP_DMA, node);
+ 	if (unlikely(!skb))
+ 		return NULL;
++	skbuff_debugobj_init_and_activate(skb);
+ 	prefetchw(skb);
+ 
+ 	/* We do our best to align skb_shared_info on a separate cache
+@@ -458,6 +496,7 @@ struct sk_buff *__alloc_skb(unsigned int
+ 	return skb;
+ 
+ nodata:
++	skbuff_debugobj_init_and_activate(skb);
+ 	kmem_cache_free(cache, skb);
+ 	return NULL;
+ }
+@@ -466,7 +505,7 @@ EXPORT_SYMBOL(__alloc_skb);
+ /**
+  *	__netdev_alloc_skb - allocate an skbuff for rx on a specific device
+  *	@dev: network device to receive on
+- *	@len: length to allocate
++ *	@length: length to allocate
+  *	@gfp_mask: get_free_pages mask, passed to alloc_skb
+  *
+  *	Allocate a new &sk_buff and assign it a usage count of one. The
+@@ -476,12 +515,43 @@ EXPORT_SYMBOL(__alloc_skb);
+  *
+  *	%NULL is returned if there is no free memory.
+  */
+-struct sk_buff *__netdev_alloc_skb(struct net_device *dev, unsigned int len,
+-				   gfp_t gfp_mask)
++struct sk_buff *__netdev_alloc_skb(struct net_device *dev,
++				   unsigned int length, gfp_t gfp_mask)
+ {
+-	struct page_frag_cache *nc;
+ 	struct sk_buff *skb;
++	unsigned int len = length;
++
++#ifdef CONFIG_SKB_RECYCLER
++	skb = skb_recycler_alloc(dev, length);
++	if (likely(skb)) {
++		/* SKBs in the recycler are from various unknown sources.
++		 * Their truesize is unknown. We should set truesize
++		 * as the needed buffer size before using it.
++		 */
++		skb->truesize = SKB_TRUESIZE(SKB_DATA_ALIGN(len + NET_SKB_PAD));
++		return skb;
++	}
++
++	len = SKB_RECYCLE_SIZE;
++	if (unlikely(length > SKB_RECYCLE_SIZE))
++		len = length;
++
++	skb = __alloc_skb(len + NET_SKB_PAD, gfp_mask,
++			  SKB_ALLOC_RX, NUMA_NO_NODE);
++	if (!skb)
++		goto skb_fail;
++
++	/* Set truesize as the needed buffer size
++	 * rather than the allocated size by __alloc_skb().
++	 */
++	if (length + NET_SKB_PAD < SKB_WITH_OVERHEAD(PAGE_SIZE))
++		skb->truesize = SKB_TRUESIZE(SKB_DATA_ALIGN(length + NET_SKB_PAD));
++
++	goto skb_success;
++#else
++	struct page_frag_cache *nc;
+ 	bool pfmemalloc;
++	bool page_frag_alloc_enable = true;
+ 	void *data;
+ 
+ 	len += NET_SKB_PAD;
+@@ -489,9 +559,13 @@ struct sk_buff *__netdev_alloc_skb(struc
+ 	/* If requested length is either too small or too big,
+ 	 * we use kmalloc() for skb->head allocation.
+ 	 */
++#ifdef CONFIG_ALLOC_SKB_PAGE_FRAG_DISABLE
++	page_frag_alloc_enable = false;
++#endif
+ 	if (len <= SKB_WITH_OVERHEAD(1024) ||
+ 	    len > SKB_WITH_OVERHEAD(PAGE_SIZE) ||
+-	    (gfp_mask & (__GFP_DIRECT_RECLAIM | GFP_DMA))) {
++	    (gfp_mask & (__GFP_DIRECT_RECLAIM | GFP_DMA)) ||
++	    !page_frag_alloc_enable) {
+ 		skb = __alloc_skb(len, gfp_mask, SKB_ALLOC_RX, NUMA_NO_NODE);
+ 		if (!skb)
+ 			goto skb_fail;
+@@ -528,6 +602,7 @@ struct sk_buff *__netdev_alloc_skb(struc
+ 	if (pfmemalloc)
+ 		skb->pfmemalloc = 1;
+ 	skb->head_frag = 1;
++#endif
+ 
+ skb_success:
+ 	skb_reserve(skb, NET_SKB_PAD);
+@@ -673,7 +748,7 @@ static void skb_free_head(struct sk_buff
+ 	}
+ }
+ 
+-static void skb_release_data(struct sk_buff *skb)
++void skb_release_data(struct sk_buff *skb)
+ {
+ 	struct skb_shared_info *shinfo = skb_shinfo(skb);
+ 	int i;
+@@ -708,12 +783,13 @@ exit:
+ /*
+  *	Free an skbuff by memory without cleaning the state.
+  */
+-static void kfree_skbmem(struct sk_buff *skb)
++void kfree_skbmem(struct sk_buff *skb)
+ {
+ 	struct sk_buff_fclones *fclones;
+ 
+ 	switch (skb->fclone) {
+ 	case SKB_FCLONE_UNAVAILABLE:
++		skbuff_debugobj_deactivate(skb);
+ 		kmem_cache_free(skbuff_head_cache, skb);
+ 		return;
+ 
+@@ -735,6 +811,7 @@ static void kfree_skbmem(struct sk_buff
+ 	if (!refcount_dec_and_test(&fclones->fclone_ref))
+ 		return;
+ fastpath:
++	skbuff_debugobj_deactivate(&fclones->skb1);
+ 	kmem_cache_free(skbuff_fclone_cache, fclones);
+ }
+ 
+@@ -927,8 +1004,43 @@ void consume_skb(struct sk_buff *skb)
+ 	if (!skb_unref(skb))
+ 		return;
+ 
++	prefetch(&skb->destructor);
++
++	/*Tian: Not sure if we need to continue using this since
++	 * since unref does the work in 5.4
++	 */
++
++	/*
++	if (likely(atomic_read(&skb->users) == 1))
++		smp_rmb();
++	else if (likely(!atomic_dec_and_test(&skb->users)))
++		return;
++	*/
++
++	/* If possible we'd like to recycle any skb rather than just free it,
++	 * but in order to do that we need to release any head state too.
++	 * We don't want to do this later because we'll be in a pre-emption
++	 * disabled state.
++	 */
++	skb_release_head_state(skb);
++
++	/* Can we recycle this skb?  If we can then it will be much faster
++	 * for us to recycle this one later than to allocate a new one
++	 * from scratch.
++	 */
++	if (likely(skb->head) && likely(skb_recycler_consume(skb)))
++		return;
++
+ 	trace_consume_skb(skb);
+-	__kfree_skb(skb);
++
++	/* We're not recycling so now we need to do the rest of what we would
++	 * have done in __kfree_skb (above and beyond the skb_release_head_state
++	 * that we already did).
++	 */
++	if (likely(skb->head))
++		skb_release_data(skb);
++
++	kfree_skbmem(skb);
+ }
+ EXPORT_SYMBOL(consume_skb);
+ #endif
+@@ -1540,6 +1652,7 @@ struct sk_buff *skb_clone(struct sk_buff
+ 		n = kmem_cache_alloc(skbuff_head_cache, gfp_mask);
+ 		if (!n)
+ 			return NULL;
++		skbuff_debugobj_init_and_activate(n);
+ 
+ 		n->fclone = SKB_FCLONE_UNAVAILABLE;
+ 	}
+@@ -1782,7 +1895,7 @@ int pskb_expand_head(struct sk_buff *skb
+ 	 * when skb is orphaned (not attached to a socket).
+ 	 */
+ 	if (!skb->sk || skb->destructor == sock_edemux)
+-		skb->truesize += size - osize;
++		skb->truesize = SKB_TRUESIZE(size);
+ 
+ 	return 0;
+ 
+@@ -4555,6 +4668,11 @@ static void skb_extensions_init(void) {}
+ 
+ void __init skb_init(void)
+ {
++	skb_data_cache = kmem_cache_create_usercopy("skb_data_cache",
++						SKB_DATA_CACHE_SIZE,
++						0, SLAB_PANIC, 0, SKB_DATA_CACHE_SIZE,
++						NULL);
++
+ 	skbuff_head_cache = kmem_cache_create_usercopy("skbuff_head_cache",
+ 					      sizeof(struct sk_buff),
+ 					      0,
+@@ -4568,6 +4686,7 @@ void __init skb_init(void)
+ 						SLAB_HWCACHE_ALIGN|SLAB_PANIC,
+ 						NULL);
+ 	skb_extensions_init();
++	skb_recycler_init();
+ }
+ 
+ static int
+@@ -5428,6 +5547,7 @@ void kfree_skb_partial(struct sk_buff *s
+ {
+ 	if (head_stolen) {
+ 		skb_release_head_state(skb);
++		skbuff_debugobj_deactivate(skb);
+ 		kmem_cache_free(skbuff_head_cache, skb);
+ 	} else {
+ 		__kfree_skb(skb);
+--- a//dev/null
++++ b/net/core/skbuff_debug.c
+@@ -0,0 +1,321 @@
++/*
++ * Copyright (c) 2015-2016, 2020 The Linux Foundation. All rights reserved.
++ *
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
++ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
++ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
++ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
++ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
++ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
++ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
++ */
++
++#include <asm/stacktrace.h>
++#include <asm/current.h>
++#include <linux/sched.h>
++#include <linux/module.h>
++#include <linux/smp.h>
++
++#include "skbuff_debug.h"
++#include "skbuff_notifier.h"
++#include "skbuff_recycle.h"
++
++static int skbuff_debugobj_enabled __read_mostly = 1;
++
++static int skbuff_debug_event_handler(struct notifier_block *nb,
++				      unsigned long action, void *data);
++static struct notifier_block skbuff_debug_notify = {
++	.notifier_call = skbuff_debug_event_handler,
++	.priority = 0
++};
++
++inline u32 skbuff_debugobj_sum(struct sk_buff *skb)
++{
++	int pos = offsetof(struct sk_buff, free_addr);
++	u32 sum = 0;
++
++	while (pos--)
++		sum += ((u8 *)skb)[pos];
++
++	return sum;
++}
++
++struct skbuff_debugobj_walking {
++	int pos;
++	void **d;
++};
++
++static int skbuff_debugobj_walkstack(struct stackframe *frame, void *p)
++{
++	struct skbuff_debugobj_walking *w = (struct skbuff_debugobj_walking *)p;
++	unsigned long pc = frame->pc;
++
++	if (w->pos < DEBUG_OBJECTS_SKBUFF_STACKSIZE - 1) {
++		w->d[w->pos++] = (void *)pc;
++		return 0;
++	}
++
++	return -ENOENT;
++}
++
++#if defined(CONFIG_ARM) || defined(CONFIG_ARM64)
++static void skbuff_debugobj_get_stack(void **ret)
++{
++	struct stackframe frame;
++
++	register unsigned long current_sp asm ("sp");
++	struct skbuff_debugobj_walking w = {0, ret};
++	void *p = &w;
++
++#ifdef CONFIG_ARM
++	frame.fp = (unsigned long)__builtin_frame_address(0);
++	frame.lr = (unsigned long)__builtin_return_address(0);
++	frame.sp = current_sp;
++	frame.pc = (unsigned long)skbuff_debugobj_get_stack;
++#endif
++
++#ifdef CONFIG_ARM64
++	start_backtrace(&frame, (unsigned long)__builtin_frame_address(0), (unsigned long)skbuff_debugobj_get_stack);
++	walk_stackframe(current, &frame, skbuff_debugobj_walkstack, p);
++#else
++	walk_stackframe(&frame, skbuff_debugobj_walkstack, p);
++#endif
++	ret[w.pos] = NULL;
++}
++#else
++#error
++static void skbuff_debugobj_get_stack(void **ret)
++{
++	/* not supported */
++	ret[0] = 0xdeadbeef;
++}
++#endif
++
++void skbuff_debugobj_print_stack(void *const *stack)
++{
++	int i;
++
++	for (i = 0; stack[i]; i++)
++		pr_emerg("\t %pS (0x%p)\n", stack[i], stack[i]);
++}
++
++static const char *skbuff_debugobj_state_name(const struct sk_buff *skb)
++{
++	int obj_state;
++
++	obj_state = debug_object_get_state((struct sk_buff *)skb);
++	switch (obj_state) {
++	case ODEBUG_STATE_NONE:
++		return "none";
++	case ODEBUG_STATE_INIT:
++		return "init";
++	case ODEBUG_STATE_INACTIVE:
++		return "inactive";
++	case ODEBUG_STATE_ACTIVE:
++		return "active";
++	case ODEBUG_STATE_DESTROYED:
++		return "destroyed";
++	case ODEBUG_STATE_NOTAVAILABLE:
++		return "not available";
++	default:
++		return "invalid";
++	}
++}
++
++void skbuff_debugobj_print_skb(const struct sk_buff *skb)
++{
++	pr_emerg("skb_debug: current process = %s (pid %i)\n",
++		 current->comm, current->pid);
++	pr_emerg("skb_debug: skb 0x%p, next 0x%p, prev 0x%p, state = %s\n", skb,
++		 skb->next, skb->prev, skbuff_debugobj_state_name(skb));
++	pr_emerg("skb_debug: free stack:\n");
++	skbuff_debugobj_print_stack(skb->free_addr);
++	pr_emerg("skb_debug: alloc stack:\n");
++	skbuff_debugobj_print_stack(skb->alloc_addr);
++}
++EXPORT_SYMBOL(skbuff_debugobj_print_skb);
++
++/* skbuff_debugobj_fixup():
++ *	Called when an error is detected in the state machine for
++ *	the objects
++ */
++static bool skbuff_debugobj_fixup(void *addr, enum debug_obj_state state)
++{
++	struct sk_buff *skb = (struct sk_buff *)addr;
++	ftrace_dump(DUMP_ALL);
++	WARN(1, "skb_debug: state = %d, skb = 0x%p sum = %d (now %d)\n",
++	     state, skb, skb->sum, skbuff_debugobj_sum(skb));
++	skb_recycler_notifier_send_event(SKB_RECYCLER_NOTIFIER_FSM, skb);
++
++	return true;
++}
++
++static struct debug_obj_descr skbuff_debug_descr = {
++	.name		= "sk_buff_struct",
++	.fixup_init	= skbuff_debugobj_fixup,
++	.fixup_activate	= skbuff_debugobj_fixup,
++	.fixup_destroy	= skbuff_debugobj_fixup,
++	.fixup_free	= skbuff_debugobj_fixup,
++};
++
++inline void skbuff_debugobj_activate(struct sk_buff *skb)
++{
++	int ret = 0;
++
++	if (!skbuff_debugobj_enabled)
++		return;
++
++	skbuff_debugobj_get_stack(skb->alloc_addr);
++	ret = debug_object_activate(skb, &skbuff_debug_descr);
++	if (ret)
++		goto err_act;
++
++	skbuff_debugobj_sum_validate(skb);
++
++	return;
++
++err_act:
++	ftrace_dump(DUMP_ALL);
++	WARN(1, "skb_debug: failed to activate err = %d skb = 0x%p sum = %d (now %d)\n",
++	     ret, skb, skb->sum, skbuff_debugobj_sum(skb));
++	skb_recycler_notifier_send_event(SKB_RECYCLER_NOTIFIER_DBLALLOC, skb);
++}
++
++inline void skbuff_debugobj_init_and_activate(struct sk_buff *skb)
++{
++	if (!skbuff_debugobj_enabled)
++		return;
++
++	/* if we're coming from the slab, the skb->sum might
++	 * be invalid anyways
++	 */
++	skb->sum = skbuff_debugobj_sum(skb);
++
++	debug_object_init(skb, &skbuff_debug_descr);
++	skbuff_debugobj_activate(skb);
++}
++
++inline void skbuff_debugobj_deactivate(struct sk_buff *skb)
++{
++	int obj_state;
++
++	if (!skbuff_debugobj_enabled)
++		return;
++
++	skb->sum = skbuff_debugobj_sum(skb);
++
++	obj_state = debug_object_get_state(skb);
++
++	if (obj_state == ODEBUG_STATE_ACTIVE) {
++		debug_object_deactivate(skb, &skbuff_debug_descr);
++		skbuff_debugobj_get_stack(skb->free_addr);
++		return;
++	}
++
++	ftrace_dump(DUMP_ALL);
++	WARN(1, "skb_debug: deactivating inactive object skb=0x%p state=%d sum = %d (now %d)\n",
++	     skb, obj_state, skb->sum, skbuff_debugobj_sum(skb));
++	skb_recycler_notifier_send_event(SKB_RECYCLER_NOTIFIER_DBLFREE, skb);
++}
++
++inline void _skbuff_debugobj_sum_validate(struct sk_buff *skb,
++					  const char *var, const char *src,
++					  int line, const char *fxn)
++{
++	if (!skbuff_debugobj_enabled || !skb)
++		return;
++
++	if (skb->sum == skbuff_debugobj_sum(skb))
++		return;
++
++	ftrace_dump(DUMP_ALL);
++	WARN(1, "skb_debug: skb sum changed skb = 0x%p sum = %d (now %d)\n",
++	     skb, skb->sum, skbuff_debugobj_sum(skb));
++	pr_emerg("skb_debug: %s() checking %s in %s:%d\n", fxn, var, src, line);
++	skb_recycler_notifier_send_event(SKB_RECYCLER_NOTIFIER_SUMERR, skb);
++}
++
++inline void skbuff_debugobj_sum_update(struct sk_buff *skb)
++{
++	if (!skbuff_debugobj_enabled || !skb)
++		return;
++
++	skb->sum = skbuff_debugobj_sum(skb);
++}
++
++inline void skbuff_debugobj_destroy(struct sk_buff *skb)
++{
++	if (!skbuff_debugobj_enabled)
++		return;
++
++	debug_object_destroy(skb, &skbuff_debug_descr);
++}
++
++static int __init disable_object_debug(char *str)
++{
++	skbuff_debugobj_enabled = 0;
++
++	pr_info("skb_debug: debug objects is disabled\n");
++	return 0;
++}
++
++early_param("no_skbuff_debug_objects", disable_object_debug);
++
++void skbuff_debugobj_print_skb_list(const struct sk_buff *skb_list,
++				    const char *list_title, int cpu)
++{
++	int count;
++	struct sk_buff *skb_i = (struct sk_buff *)skb_list;
++	u32 sum_i, sum_now;
++	int obj_state;
++
++	if (cpu < 0) {
++		cpu = get_cpu();
++		put_cpu();
++	}
++	pr_emerg("skb_debug: start skb list '%s' [CPU#%d]\n", list_title, cpu);
++	count = 0;
++	if (skb_list) {
++		do {
++			obj_state =
++				debug_object_get_state(skb_i);
++			if (obj_state < ODEBUG_STATE_NOTAVAILABLE) {
++				sum_i = skb_i->sum;
++				sum_now = skbuff_debugobj_sum(skb_i);
++			} else {
++				sum_i = 0;
++				sum_now = 0;
++			}
++			if (sum_i != sum_now) {
++				pr_emerg("skb_debug: [%02d] skb 0x%p, next 0x%p, prev 0x%p, state %d (%s), sum %d (now %d)\n",
++					 count, skb_i, skb_i->next, skb_i->prev,
++					 obj_state, skbuff_debugobj_state_name(skb_i),
++					 sum_i, sum_now);
++			}
++			skb_i = skb_i->next;
++			count++;
++		} while (skb_list != skb_i);
++	}
++	pr_emerg("skb_debug: end skb list '%s'. In total %d skbs iterated.\n", list_title, count);
++}
++
++void skbuff_debugobj_register_callback(void)
++{
++	skb_recycler_notifier_register(&skbuff_debug_notify);
++}
++
++int skbuff_debug_event_handler(struct notifier_block *nb, unsigned long action,
++			       void *data)
++{
++	struct sk_buff *skb = (struct sk_buff *)data;
++
++	pr_emerg("skb_debug: notifier event %lu\n", action);
++	skbuff_debugobj_print_skb(skb);
++	skb_recycler_print_all_lists();
++
++	return NOTIFY_DONE;
++}
+--- a//dev/null
++++ b/net/core/skbuff_debug.h
+@@ -0,0 +1,54 @@
++/*
++ * Copyright (c) 2015, The Linux Foundation. All rights reserved.
++ *
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
++ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
++ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
++ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
++ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
++ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
++ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
++ */
++
++#include <linux/skbuff.h>
++#include <linux/debugobjects.h>
++
++#ifndef _LINUX_SKBBUFF_DEBUG_OBJECTS
++#define _LINUX_SKBBUFF_DEBUG_OBJECTS
++
++#ifdef CONFIG_DEBUG_OBJECTS_SKBUFF
++void skbuff_debugobj_init_and_activate(struct sk_buff *skb);
++void skbuff_debugobj_activate(struct sk_buff *skb);
++void skbuff_debugobj_deactivate(struct sk_buff *skb);
++void skbuff_debugobj_destroy(struct sk_buff *skb);
++#define skbuff_debugobj_sum_validate(skb) _skbuff_debugobj_sum_validate(skb, \
++		#skb, __FILE__, __LINE__, __func__)
++void _skbuff_debugobj_sum_validate(struct sk_buff *skb, const char *var,
++				   const char *src, int line, const char *fxn);
++void skbuff_debugobj_sum_update(struct sk_buff *skb);
++void skbuff_debugobj_print_skb(const struct sk_buff *skb);
++
++void skbuff_debugobj_print_skb_list(const struct sk_buff *skb_list,
++				    const char *list_title, int cpu);
++void skbuff_debugobj_register_callback(void);
++
++#else
++static inline void skbuff_debugobj_init_and_activate(struct sk_buff *skb) { }
++static inline void skbuff_debugobj_activate(struct sk_buff *skb) { }
++static inline void skbuff_debugobj_deactivate(struct sk_buff *skb) { }
++static inline void skbuff_debugobj_destroy(struct sk_buff *skb) { }
++static inline void skbuff_debugobj_sum_validate(struct sk_buff *skb) { }
++static inline void skbuff_debugobj_sum_update(struct sk_buff *skb) { }
++static inline void skbuff_debugobj_print_skb(const struct sk_buff *skb) { }
++
++
++static inline void skbuff_debugobj_print_skb_list
++	(const struct sk_buff *skb_list, const char *list_title, int cpu) { }
++static inline void skbuff_debugobj_register_callback(void) { }
++#endif
++
++#endif /* _LINUX_SKBBUFF_DEBUG_OBJECTS */
+--- a//dev/null
++++ b/net/core/skbuff_notifier.c
+@@ -0,0 +1,42 @@
++/*
++ * Copyright (c) 2016, The Linux Foundation. All rights reserved.
++ *
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
++ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
++ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
++ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
++ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
++ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
++ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
++ */
++
++/* Notifier interface for the SKB Recycler */
++
++#include "skbuff_notifier.h"
++
++static BLOCKING_NOTIFIER_HEAD(skb_recycler_notifier);
++
++int skb_recycler_notifier_register(struct notifier_block *nb)
++{
++	return blocking_notifier_chain_register(&skb_recycler_notifier, nb);
++}
++EXPORT_SYMBOL(skb_recycler_notifier_register);
++
++int skb_recycler_notifier_unregister(struct notifier_block *nb)
++{
++	return blocking_notifier_chain_unregister(&skb_recycler_notifier, nb);
++}
++EXPORT_SYMBOL(skb_recycler_notifier_unregister);
++
++int skb_recycler_notifier_send_event(unsigned long action, struct sk_buff *skb)
++{
++	int ret;
++
++	ret = blocking_notifier_call_chain(&skb_recycler_notifier, action, skb);
++
++	return 0;
++}
+--- a//dev/null
++++ b/net/core/skbuff_notifier.h
+@@ -0,0 +1,52 @@
++/* 
++ * Copyright (c) 2016, The Linux Foundation. All rights reserved.
++ *
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
++ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
++ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
++ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
++ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
++ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
++ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
++ */
++
++#ifndef SKBUFF_NOTIFIER_H
++#define SKBUFF_NOTIFIER_H
++
++#include <linux/notifier.h>
++#include <linux/skbuff.h>
++
++/* notifier events */
++#define SKB_RECYCLER_NOTIFIER_SUMERR   0x0001
++#define SKB_RECYCLER_NOTIFIER_DBLFREE  0x0002
++#define SKB_RECYCLER_NOTIFIER_DBLALLOC 0x0004
++#define SKB_RECYCLER_NOTIFIER_FSM      0x0008
++
++#if defined(CONFIG_DEBUG_OBJECTS_SKBUFF)
++int skb_recycler_notifier_register(struct notifier_block *nb);
++int skb_recycler_notifier_unregister(struct notifier_block *nb);
++int skb_recycler_notifier_send_event(unsigned long action,
++				     struct sk_buff *skb);
++#else
++static inline int skb_recycler_notifier_register(struct notifier_block *nb)
++{
++	return 0;
++}
++
++static inline int skb_recycler_notifier_unregister(struct notifier_block *nb)
++{
++	return 0;
++}
++
++static inline int skb_recycler_notifier_send_event(unsigned long action,
++						   struct sk_buff *skb)
++{
++	return 1;
++}
++#endif /* CONFIG_DEBUG_OBJECTS_SKBUFF */
++
++#endif /* SKBUFF_NOTIFIER_H */
+--- a//dev/null
++++ b/net/core/skbuff_recycle.c
+@@ -0,0 +1,576 @@
++/*
++ * Copyright (c) 2013-2016, 2019-2020, The Linux Foundation. All rights reserved.
++ *
++ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
++ *
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
++ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
++ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
++ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
++ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
++ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
++ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
++ */
++/* Generic skb recycler */
++#include "skbuff_recycle.h"
++#include <linux/proc_fs.h>
++#include <linux/string.h>
++
++#include "skbuff_debug.h"
++
++static struct proc_dir_entry *proc_net_skbrecycler;
++
++static DEFINE_PER_CPU(struct sk_buff_head, recycle_list);
++static int skb_recycle_max_skbs = SKB_RECYCLE_MAX_SKBS;
++
++#ifdef CONFIG_SKB_RECYCLER_MULTI_CPU
++static DEFINE_PER_CPU(struct sk_buff_head, recycle_spare_list);
++static struct global_recycler glob_recycler;
++static int skb_recycle_spare_max_skbs = SKB_RECYCLE_SPARE_MAX_SKBS;
++#endif
++
++inline struct sk_buff *skb_recycler_alloc(struct net_device *dev,
++					  unsigned int length)
++{
++	unsigned long flags;
++	struct sk_buff_head *h;
++	struct sk_buff *skb = NULL;
++	struct sk_buff *ln = NULL;
++
++	if (unlikely(length > SKB_RECYCLE_SIZE))
++		return NULL;
++
++	h = &get_cpu_var(recycle_list);
++	local_irq_save(flags);
++	skb = skb_peek(h);
++	if (skb) {
++		ln = skb_peek_next(skb, h);
++		skbuff_debugobj_activate(skb);
++		/* Recalculate the sum for skb->next as next and prev pointers
++		 * of skb->next will be updated in __skb_unlink
++		 */
++		skbuff_debugobj_sum_validate(ln);
++		__skb_unlink(skb, h);
++		skbuff_debugobj_sum_update(ln);
++	}
++#ifdef CONFIG_SKB_RECYCLER_MULTI_CPU
++	if (unlikely(!skb)) {
++		u8 head;
++
++		spin_lock(&glob_recycler.lock);
++		/* If global recycle list is not empty, use global buffers */
++		head = glob_recycler.head;
++		if (unlikely(head == glob_recycler.tail)) {
++			spin_unlock(&glob_recycler.lock);
++		} else {
++			struct sk_buff *gn = glob_recycler.pool[head].next;
++			struct sk_buff *gp = glob_recycler.pool[head].prev;
++
++			/* Move SKBs from global list to CPU pool */
++			skbuff_debugobj_sum_validate(gn);
++			skbuff_debugobj_sum_validate(gp);
++			skb_queue_splice_init(&glob_recycler.pool[head], h);
++			skbuff_debugobj_sum_update(gn);
++			skbuff_debugobj_sum_update(gp);
++
++			head = (head + 1) & SKB_RECYCLE_MAX_SHARED_POOLS_MASK;
++			glob_recycler.head = head;
++			spin_unlock(&glob_recycler.lock);
++			/* We have refilled the CPU pool - dequeue */
++			skb = skb_peek(h);
++			if (skb) {
++				/* Recalculate the sum for skb->next as next and
++				 * prev pointers of skb->next will be updated
++				 * in __skb_unlink
++				 */
++				ln = skb_peek_next(skb, h);
++				skbuff_debugobj_activate(skb);
++				skbuff_debugobj_sum_validate(ln);
++				__skb_unlink(skb, h);
++				skbuff_debugobj_sum_update(ln);
++			}
++		}
++	}
++#endif
++	local_irq_restore(flags);
++	put_cpu_var(recycle_list);
++
++	if (likely(skb)) {
++		struct skb_shared_info *shinfo;
++
++		/* We're about to write a large amount to the skb to
++		 * zero most of the structure so prefetch the start
++		 * of the shinfo region now so it's in the D-cache
++		 * before we start to write that.
++		 */
++		shinfo = skb_shinfo(skb);
++		prefetchw(shinfo);
++
++		zero_struct(skb, offsetof(struct sk_buff, tail));
++		refcount_set(&skb->users, 1);
++		skb->mac_header = (typeof(skb->mac_header))~0U;
++		skb->transport_header = (typeof(skb->transport_header))~0U;
++		zero_struct(shinfo, offsetof(struct skb_shared_info, dataref));
++		atomic_set(&shinfo->dataref, 1);
++
++		skb->data = skb->head + NET_SKB_PAD;
++		skb_reset_tail_pointer(skb);
++
++		skb->dev = dev;
++	}
++
++	return skb;
++}
++
++inline bool skb_recycler_consume(struct sk_buff *skb)
++{
++	unsigned long flags;
++	struct sk_buff_head *h;
++	struct sk_buff *ln = NULL;
++	/* Can we recycle this skb?  If not, simply return that we cannot */
++	if (unlikely(!consume_skb_can_recycle(skb, SKB_RECYCLE_MIN_SIZE,
++					      SKB_RECYCLE_MAX_SIZE)))
++		return false;
++
++	/* If we can, then it will be much faster for us to recycle this one
++	 * later than to allocate a new one from scratch.
++	 */
++	h = &get_cpu_var(recycle_list);
++	local_irq_save(flags);
++	/* Attempt to enqueue the CPU hot recycle list first */
++	if (likely(skb_queue_len(h) < skb_recycle_max_skbs)) {
++		ln = skb_peek(h);
++		/* Recalculate the sum for peek of list as next and prev
++		 * pointers of skb->next will be updated in __skb_queue_head
++		 */
++		skbuff_debugobj_sum_validate(ln);
++		__skb_queue_head(h, skb);
++		skbuff_debugobj_deactivate(skb);
++		skbuff_debugobj_sum_update(ln);
++		local_irq_restore(flags);
++		preempt_enable();
++		return true;
++	}
++#ifdef CONFIG_SKB_RECYCLER_MULTI_CPU
++	h = this_cpu_ptr(&recycle_spare_list);
++
++	/* The CPU hot recycle list was full; if the spare list is also full,
++	 * attempt to move the spare list to the global list for other CPUs to
++	 * use.
++	 */
++	if (unlikely(skb_queue_len(h) >= skb_recycle_spare_max_skbs)) {
++		u8 cur_tail, next_tail;
++
++		spin_lock(&glob_recycler.lock);
++		cur_tail = glob_recycler.tail;
++		next_tail = (cur_tail + 1) & SKB_RECYCLE_MAX_SHARED_POOLS_MASK;
++		if (next_tail != glob_recycler.head) {
++			struct sk_buff_head *p = &glob_recycler.pool[cur_tail];
++			struct sk_buff *hn = h->next, *hp = h->prev;
++
++			/* Move SKBs from CPU pool to Global pool*/
++			skbuff_debugobj_sum_validate(hp);
++			skbuff_debugobj_sum_validate(hn);
++			skb_queue_splice_init(h, p);
++			skbuff_debugobj_sum_update(hp);
++			skbuff_debugobj_sum_update(hn);
++
++			/* Done with global list init */
++			glob_recycler.tail = next_tail;
++			spin_unlock(&glob_recycler.lock);
++
++			/* Recalculate the sum for peek of list as next and prev
++			 * pointers of skb->next will be updated in
++			 * __skb_queue_head
++			 */
++			ln = skb_peek(h);
++			skbuff_debugobj_sum_validate(ln);
++			/* We have now cleared room in the spare;
++			 * Initialize and enqueue skb into spare
++			 */
++			__skb_queue_head(h, skb);
++			skbuff_debugobj_sum_update(ln);
++			skbuff_debugobj_deactivate(skb);
++
++			local_irq_restore(flags);
++			preempt_enable();
++			return true;
++		}
++		/* We still have a full spare because the global is also full */
++		spin_unlock(&glob_recycler.lock);
++	} else {
++		/* We have room in the spare list; enqueue to spare list */
++		ln = skb_peek(h);
++		/* Recalculate the sum for peek of list as next and prev
++		 * pointers of skb->next will be updated in __skb_queue_head
++		 */
++		skbuff_debugobj_sum_validate(ln);
++		__skb_queue_head(h, skb);
++		skbuff_debugobj_deactivate(skb);
++		skbuff_debugobj_sum_update(ln);
++		local_irq_restore(flags);
++		preempt_enable();
++		return true;
++	}
++#endif
++
++	local_irq_restore(flags);
++	preempt_enable();
++
++	return false;
++}
++
++static void skb_recycler_free_skb(struct sk_buff_head *list)
++{
++	struct sk_buff *skb = NULL;
++	unsigned long flags;
++
++	spin_lock_irqsave(&list->lock, flags);
++	while ((skb = skb_peek(list)) != NULL) {
++		skbuff_debugobj_activate(skb);
++		__skb_unlink(skb, list);
++		skb_release_data(skb);
++		kfree_skbmem(skb);
++	}
++	spin_unlock_irqrestore(&list->lock, flags);
++}
++
++static int skb_cpu_callback(unsigned int ocpu)
++{
++	unsigned long oldcpu = (unsigned long)ocpu;
++
++	skb_recycler_free_skb(&per_cpu(recycle_list, oldcpu));
++#ifdef CONFIG_SKB_RECYCLER_MULTI_CPU
++	spin_lock(&glob_recycler.lock);
++	skb_recycler_free_skb(&per_cpu(recycle_spare_list, oldcpu));
++	spin_unlock(&glob_recycler.lock);
++#endif
++
++	return NOTIFY_DONE;
++}
++
++#ifdef CONFIG_SKB_RECYCLER_PREALLOC
++static int __init skb_prealloc_init_list(void)
++{
++	int i;
++	struct sk_buff *skb;
++
++	for (i = 0; i < SKB_RECYCLE_MAX_PREALLOC_SKBS; i++) {
++		skb = __alloc_skb(SKB_RECYCLE_MAX_SIZE + NET_SKB_PAD,
++				  GFP_KERNEL, 0, NUMA_NO_NODE);
++		if (unlikely(!skb))
++			return -ENOMEM;
++
++		skb_reserve(skb, NET_SKB_PAD);
++
++		skb_recycler_consume(skb);
++	}
++	return 0;
++}
++#endif
++
++/* procfs: count
++ * Show skb counts
++ */
++static int proc_skb_count_show(struct seq_file *seq, void *v)
++{
++	int cpu;
++	int len;
++	int total;
++#ifdef CONFIG_SKB_RECYCLER_MULTI_CPU
++	unsigned int i;
++	unsigned long flags;
++#endif
++
++	total = 0;
++
++	for_each_online_cpu(cpu) {
++		len = skb_queue_len(&per_cpu(recycle_list, cpu));
++		seq_printf(seq, "recycle_list[%d]: %d\n", cpu, len);
++		total += len;
++	}
++
++#ifdef CONFIG_SKB_RECYCLER_MULTI_CPU
++	for_each_online_cpu(cpu) {
++		len = skb_queue_len(&per_cpu(recycle_spare_list, cpu));
++		seq_printf(seq, "recycle_spare_list[%d]: %d\n", cpu, len);
++		total += len;
++	}
++
++	for (i = 0; i < SKB_RECYCLE_MAX_SHARED_POOLS; i++) {
++		spin_lock_irqsave(&glob_recycler.lock, flags);
++		len = skb_queue_len(&glob_recycler.pool[i]);
++		spin_unlock_irqrestore(&glob_recycler.lock, flags);
++		seq_printf(seq, "global_list[%d]: %d\n", i, len);
++		total += len;
++	}
++#endif
++
++	seq_printf(seq, "total: %d\n", total);
++	return 0;
++}
++
++static int proc_skb_count_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, proc_skb_count_show, PDE_DATA(inode));
++}
++
++static const struct proc_ops proc_skb_count_fops = {
++	.proc_open    = proc_skb_count_open,
++	.proc_read    = seq_read,
++	.proc_lseek  = seq_lseek,
++	.proc_release = single_release,
++};
++
++/* procfs: flush
++ * Flush skbs
++ */
++static void skb_recycler_flush_task(struct work_struct *work)
++{
++	unsigned long flags;
++	struct sk_buff_head *h;
++	struct sk_buff_head tmp;
++
++	skb_queue_head_init(&tmp);
++
++	h = &get_cpu_var(recycle_list);
++	local_irq_save(flags);
++	skb_queue_splice_init(h, &tmp);
++	local_irq_restore(flags);
++	put_cpu_var(recycle_list);
++	skb_recycler_free_skb(&tmp);
++
++#ifdef CONFIG_SKB_RECYCLER_MULTI_CPU
++	h = &get_cpu_var(recycle_spare_list);
++	local_irq_save(flags);
++	skb_queue_splice_init(h, &tmp);
++	local_irq_restore(flags);
++	put_cpu_var(recycle_spare_list);
++	skb_recycler_free_skb(&tmp);
++#endif
++}
++
++static ssize_t proc_skb_flush_write(struct file *file,
++				    const char __user *buf,
++				    size_t count,
++				    loff_t *ppos)
++{
++#ifdef CONFIG_SKB_RECYCLER_MULTI_CPU
++	unsigned int i;
++	unsigned long flags;
++#endif
++	schedule_on_each_cpu(&skb_recycler_flush_task);
++
++#ifdef CONFIG_SKB_RECYCLER_MULTI_CPU
++	spin_lock_irqsave(&glob_recycler.lock, flags);
++	for (i = 0; i < SKB_RECYCLE_MAX_SHARED_POOLS; i++)
++		skb_recycler_free_skb(&glob_recycler.pool[i]);
++	glob_recycler.head = 0;
++	glob_recycler.tail = 0;
++	spin_unlock_irqrestore(&glob_recycler.lock, flags);
++#endif
++	return count;
++}
++
++static const struct proc_ops proc_skb_flush_fops = {
++	.proc_write   = proc_skb_flush_write,
++	.proc_open    = simple_open,
++	.proc_lseek  = noop_llseek,
++};
++
++/* procfs: max_skbs
++ * Show max skbs
++ */
++static int proc_skb_max_skbs_show(struct seq_file *seq, void *v)
++{
++	seq_printf(seq, "%d\n", skb_recycle_max_skbs);
++	return 0;
++}
++
++static int proc_skb_max_skbs_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, proc_skb_max_skbs_show, PDE_DATA(inode));
++}
++
++static ssize_t proc_skb_max_skbs_write(struct file *file,
++				       const char __user *buf,
++				       size_t count,
++				       loff_t *ppos)
++{
++	int ret;
++	int max;
++	char buffer[13];
++
++	memset(buffer, 0, sizeof(buffer));
++	if (count > sizeof(buffer) - 1)
++		count = sizeof(buffer) - 1;
++	if (copy_from_user(buffer, buf, count) != 0)
++		return -EFAULT;
++	ret = kstrtoint(strstrip(buffer), 10, &max);
++	if (ret == 0 && max >= 0)
++		skb_recycle_max_skbs = max;
++
++	return count;
++}
++
++static const struct proc_ops proc_skb_max_skbs_fops = {
++	.proc_open    = proc_skb_max_skbs_open,
++	.proc_read    = seq_read,
++	.proc_write   = proc_skb_max_skbs_write,
++	.proc_release = single_release,
++};
++
++#ifdef CONFIG_SKB_RECYCLER_MULTI_CPU
++/* procfs: max_spare_skbs
++ * Show max spare skbs
++ */
++static int proc_skb_max_spare_skbs_show(struct seq_file *seq, void *v)
++{
++	seq_printf(seq, "%d\n", skb_recycle_spare_max_skbs);
++	return 0;
++}
++
++static int proc_skb_max_spare_skbs_open(struct inode *inode, struct file *file)
++{
++	return single_open(file,
++			   proc_skb_max_spare_skbs_show,
++			   PDE_DATA(inode));
++}
++
++static ssize_t
++proc_skb_max_spare_skbs_write(struct file *file,
++			      const char __user *buf,
++			      size_t count,
++			      loff_t *ppos)
++{
++	int ret;
++	int max;
++	char buffer[13];
++
++	memset(buffer, 0, sizeof(buffer));
++	if (count > sizeof(buffer) - 1)
++		count = sizeof(buffer) - 1;
++	if (copy_from_user(buffer, buf, count) != 0)
++		return -EFAULT;
++	ret = kstrtoint(strstrip(buffer), 10, &max);
++	if (ret == 0 && max >= 0)
++		skb_recycle_spare_max_skbs = max;
++
++	return count;
++}
++
++static const struct proc_ops proc_skb_max_spare_skbs_fops = {
++	.proc_open    = proc_skb_max_spare_skbs_open,
++	.proc_read    = seq_read,
++	.proc_write   = proc_skb_max_spare_skbs_write,
++	.proc_release = single_release,
++};
++#endif /* CONFIG_SKB_RECYCLER_MULTI_CPU */
++
++static void skb_recycler_init_procfs(void)
++{
++	proc_net_skbrecycler = proc_mkdir("skb_recycler", init_net.proc_net);
++	if (!proc_net_skbrecycler) {
++		pr_err("cannot create skb_recycle proc dir");
++		return;
++	}
++
++	if (!proc_create("count",
++			 S_IRUGO,
++			 proc_net_skbrecycler,
++			 &proc_skb_count_fops))
++		pr_err("cannot create proc net skb_recycle held\n");
++
++	if (!proc_create("flush",
++			 S_IWUGO,
++			 proc_net_skbrecycler,
++			 &proc_skb_flush_fops))
++		pr_err("cannot create proc net skb_recycle flush\n");
++
++	if (!proc_create("max_skbs",
++			 S_IRUGO | S_IWUGO,
++			 proc_net_skbrecycler,
++			 &proc_skb_max_skbs_fops))
++		pr_err("cannot create proc net skb_recycle max_skbs\n");
++
++#ifdef CONFIG_SKB_RECYCLER_MULTI_CPU
++	if (!proc_create("max_spare_skbs",
++			 S_IRUGO | S_IWUGO,
++			 proc_net_skbrecycler,
++			 &proc_skb_max_spare_skbs_fops))
++		pr_err("cannot create proc net skb_recycle max_spare_skbs\n");
++#endif
++}
++
++void __init skb_recycler_init(void)
++{
++	int cpu;
++#ifdef CONFIG_SKB_RECYCLER_MULTI_CPU
++	unsigned int i;
++#endif
++
++	for_each_possible_cpu(cpu) {
++		skb_queue_head_init(&per_cpu(recycle_list, cpu));
++	}
++
++#ifdef CONFIG_SKB_RECYCLER_MULTI_CPU
++	for_each_possible_cpu(cpu) {
++		skb_queue_head_init(&per_cpu(recycle_spare_list, cpu));
++	}
++
++	spin_lock_init(&glob_recycler.lock);
++
++	for (i = 0; i < SKB_RECYCLE_MAX_SHARED_POOLS; i++)
++		skb_queue_head_init(&glob_recycler.pool[i]);
++	glob_recycler.head = 0;
++	glob_recycler.tail = 0;
++#endif
++
++#ifdef CONFIG_SKB_RECYCLER_PREALLOC
++	if (skb_prealloc_init_list())
++		pr_err("Failed to preallocate SKBs for recycle list\n");
++#endif
++	cpuhp_setup_state_nocalls(CPUHP_SKB_RECYCLER_DEAD, "net/skbuff_recycler:dead:",NULL, skb_cpu_callback);
++	skbuff_debugobj_register_callback();
++	skb_recycler_init_procfs();
++}
++
++void skb_recycler_print_all_lists(void)
++{
++
++	unsigned long flags;
++	int cpu;
++#ifdef CONFIG_SKB_RECYCLER_MULTI_CPU
++	int i;
++	struct sk_buff_head *h;
++
++	cpu = get_cpu();
++	spin_lock_irqsave(&glob_recycler.lock, flags);
++	for (i = 0; i < SKB_RECYCLE_MAX_SHARED_POOLS; i++)
++		skbuff_debugobj_print_skb_list((&glob_recycler.pool[i])->next,
++					       "Global Pool", -1);
++	spin_unlock_irqrestore(&glob_recycler.lock, flags);
++
++	preempt_disable();
++	local_irq_save(flags);
++
++	h = &per_cpu(recycle_spare_list, cpu);
++	skbuff_debugobj_print_skb_list(h->next, "Recycle Spare", cpu);
++
++	local_irq_restore(flags);
++	preempt_enable();
++#endif
++
++	preempt_disable();
++	local_irq_save(flags);
++	h = &per_cpu(recycle_list, cpu);
++	skbuff_debugobj_print_skb_list(h->next, "Recycle List", cpu);
++
++	local_irq_restore(flags);
++	preempt_enable();
++
++}
+--- a//dev/null
++++ b/net/core/skbuff_recycle.h
+@@ -0,0 +1,170 @@
++/*
++ * Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
++ *
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
++ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
++ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
++ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
++ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
++ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
++ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
++ *
++ */
++/* Definitions for the skb recycler functions */
++#ifndef _LINUX_SKBUFF_RECYCLE_H
++#define _LINUX_SKBUFF_RECYCLE_H
++
++#include <linux/module.h>
++#include <linux/types.h>
++#include <linux/cpu.h>
++#include <linux/module.h>
++#include <linux/types.h>
++#include <linux/kernel.h>
++#include <linux/mm.h>
++#include <linux/interrupt.h>
++#include <linux/in.h>
++#include <linux/inet.h>
++#include <linux/slab.h>
++#include <linux/netdevice.h>
++#ifdef CONFIG_NET_CLS_ACT
++#include <net/pkt_sched.h>
++#endif
++#include <linux/string.h>
++#include <linux/skbuff.h>
++#include <linux/splice.h>
++#include <linux/init.h>
++#include <linux/prefetch.h>
++#include <linux/if.h>
++
++#define SKB_RECYCLE_SIZE	2304
++#define SKB_RECYCLE_MIN_SIZE	SKB_RECYCLE_SIZE
++#define SKB_RECYCLE_MAX_SIZE	(3904 - NET_SKB_PAD)
++#define SKB_RECYCLE_MAX_SKBS	1024
++
++#define SKB_RECYCLE_SPARE_MAX_SKBS		256
++
++#ifdef CONFIG_SKB_RECYCLER_PREALLOC
++#define SKB_RECYCLE_MAX_PREALLOC_SKBS CONFIG_SKB_RECYCLE_MAX_PREALLOC_SKBS
++#define SKB_RECYCLE_MAX_SHARED_POOLS \
++	DIV_ROUND_UP(SKB_RECYCLE_MAX_PREALLOC_SKBS, \
++			SKB_RECYCLE_SPARE_MAX_SKBS)
++#else
++#define SKB_RECYCLE_MAX_SHARED_POOLS            8
++#endif
++
++#define SKB_RECYCLE_MAX_SHARED_POOLS_MASK \
++	(SKB_RECYCLE_MAX_SHARED_POOLS - 1)
++
++#ifdef CONFIG_SKB_RECYCLER_MULTI_CPU
++struct global_recycler {
++	/* Global circular list which holds the shared skb pools */
++	struct sk_buff_head pool[SKB_RECYCLE_MAX_SHARED_POOLS];
++	u8 head;		/* head of the circular list */
++	u8 tail;		/* tail of the circular list */
++	spinlock_t lock;
++};
++#endif
++
++static __always_inline void zero_struct(void *v, int size)
++{
++	u32 *s = (u32 *)v;
++
++	/* We assume that size is word aligned; in fact, it's constant */
++	WARN_ON((size & 3) != 0);
++
++	/* This looks odd but we "know" size is a constant, and so the
++	 * compiler can fold away all of the conditionals.  The compiler is
++	 * pretty smart here, and can fold away the loop, too!
++	 */
++	while (size > 0) {
++		if (size >= 4)
++			s[0] = 0;
++		if (size >= 8)
++			s[1] = 0;
++		if (size >= 12)
++			s[2] = 0;
++		if (size >= 16)
++			s[3] = 0;
++		if (size >= 20)
++			s[4] = 0;
++		if (size >= 24)
++			s[5] = 0;
++		if (size >= 28)
++			s[6] = 0;
++		if (size >= 32)
++			s[7] = 0;
++		if (size >= 36)
++			s[8] = 0;
++		if (size >= 40)
++			s[9] = 0;
++		if (size >= 44)
++			s[10] = 0;
++		if (size >= 48)
++			s[11] = 0;
++		if (size >= 52)
++			s[12] = 0;
++		if (size >= 56)
++			s[13] = 0;
++		if (size >= 60)
++			s[14] = 0;
++		if (size >= 64)
++			s[15] = 0;
++		size -= 64;
++		s += 16;
++	}
++}
++
++static inline bool consume_skb_can_recycle(const struct sk_buff *skb,
++					   int min_skb_size, int max_skb_size)
++{
++	if (unlikely(irqs_disabled()))
++		return false;
++
++	if (unlikely(skb_shinfo(skb)->tx_flags & SKBFL_ZEROCOPY_ENABLE))
++		return false;
++
++	if (unlikely(skb_is_nonlinear(skb)))
++		return false;
++
++	if (unlikely(skb_shinfo(skb)->frag_list))
++		return false;
++
++	if (unlikely(skb_shinfo(skb)->nr_frags))
++		return false;
++
++	if (unlikely(skb->fclone != SKB_FCLONE_UNAVAILABLE))
++		return false;
++
++	min_skb_size = SKB_DATA_ALIGN(min_skb_size + NET_SKB_PAD);
++	if (unlikely(skb_end_pointer(skb) - skb->head < min_skb_size))
++		return false;
++
++	max_skb_size = SKB_DATA_ALIGN(max_skb_size + NET_SKB_PAD);
++	if (unlikely(skb_end_pointer(skb) - skb->head > max_skb_size))
++		return false;
++
++	if (unlikely(skb_cloned(skb)))
++		return false;
++
++	if (unlikely(skb_pfmemalloc(skb)))
++		return false;
++
++	return true;
++}
++
++#ifdef CONFIG_SKB_RECYCLER
++void __init skb_recycler_init(void);
++struct sk_buff *skb_recycler_alloc(struct net_device *dev, unsigned int length);
++bool skb_recycler_consume(struct sk_buff *skb);
++void skb_recycler_print_all_lists(void);
++#else
++#define skb_recycler_init()  {}
++#define skb_recycler_alloc(dev, len) NULL
++#define skb_recycler_consume(skb) false
++#define skb_recycler_print_all_lists() false
++#endif
++#endif
+--- a/scripts/Makefile.lib
++++ b/scripts/Makefile.lib
+@@ -232,6 +232,14 @@ ifeq ($(CONFIG_LTO_CLANG),y)
+ mod-prelink-ext := .lto
+ endif
+ 
++#Add DDR profiling for different DDR size in dtsi
++ifeq ($(CONFIG_IPQ_MEM_PROFILE),256)
++dtc_cpp_flags += -D __IPQ_MEM_PROFILE_256_MB__
++else ifeq ($(CONFIG_IPQ_FLASH_16M_PROFILE),y)
++dtc_cpp_flags += -D __IPQ_MEM_PROFILE_256_MB__
++else ifeq ($(CONFIG_IPQ_MEM_PROFILE),512)
++dtc_cpp_flags += -D __IPQ_MEM_PROFILE_512_MB__
++endif
+ # Useful for describing the dependency of composite objects
+ # Usage:
+ #   $(call multi_depend, multi_used_targets, suffix_to_remove, suffix_to_add)
