@@ -658,9 +658,9 @@ EXTRA_CFLAGS+= -DNSS_NETLINK_UDP_ST_NO_RMNET_SUPPORT
 endif
 endif
 
-# ifneq ($(CONFIG_PACKAGE_kmod-qca-nss-drv-ovpn-mgr),)
-# MAKE_OPTS+=ovpn-mgr=y
-# endif
+ifneq ($(CONFIG_PACKAGE_kmod-qca-nss-drv-ovpn-mgr),)
+MAKE_OPTS+=ovpn-mgr=y
+endif
 
 ifneq ($(CONFIG_PACKAGE_kmod-qca-nss-drv-ovpn-link),)
 MAKE_OPTS+=ovpn-link=y
@@ -688,6 +688,10 @@ endif
 ifneq ($(CONFIG_PACKAGE_kmod-qca-nss-drv-vxlanmgr),)
 MAKE_OPTS+=vxlanmgr=y
 EXTRA_CFLAGS += -DNSS_VXLAN_ENABLED
+endif
+
+ifneq ($(CONFIG_PACKAGE_kmod-qca-nss-drv-mirror),)
+MAKE_OPTS+=mirror=y
 endif
 
 ifneq ($(CONFIG_PACKAGE_kmod-qca-nss-drv-match),)
@@ -723,6 +727,7 @@ $(eval $(call KernelPackage,qca-nss-drv-tunipip6))
 $(eval $(call KernelPackage,qca-nss-drv-qdisc))
 $(eval $(call KernelPackage,qca-nss-drv-igs))
 $(eval $(call KernelPackage,qca-nss-drv-portifmgr))
+$(eval $(call KernelPackage,qca-nss-drv-mirror))
 $(eval $(call KernelPackage,qca-nss-drv-netlink))
 $(eval $(call KernelPackage,qca-nss-drv-ipsecmgr))
 $(eval $(call KernelPackage,qca-nss-drv-bridge-mgr))
