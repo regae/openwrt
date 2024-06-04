@@ -42,9 +42,9 @@ ipq806x_setup_interfaces()
 		;;
 	asus,onhub |\
 	tplink,onhub)
-		ucidef_set_interfaces_lan_wan "lan1" "wan"
-		ucidef_set_network_device_conduit "lan1" "eth1"
-		ucidef_set_network_device_conduit "wan" "eth0"
+		ucidef_set_interfaces_lan_wan "eth1" "eth0"
+		ucidef_add_switch "switch0" \
+			"1:lan" "6@eth1" "2:wan" "0@eth0"
 		;;
 	edgecore,ecw5410)
 		ucidef_set_interfaces_lan_wan "eth1" "eth0"
