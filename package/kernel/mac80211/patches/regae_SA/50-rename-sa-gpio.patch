@@ -1,0 +1,13 @@
+rename to fix warning #gpio-cells not phandle
+makesure in dts too
+--- a/drivers/net/wireless/ath/ath10k/wmi.c
++++ b/drivers/net/wireless/ath/ath10k/wmi.c
+@@ -9295,7 +9295,7 @@ ath10k_wmi_get_smart_ant_gpio_dt(struct ath10k *ar, u32 *gpio, u32 *gpio_func)
+ 		 */
+ 		return -ENOENT;
+ 
+-	ret = of_property_read_u32_array(node, "qcom,ath10k-sa-gpio", gpio,
++	ret = of_property_read_u32_array(node, "qcom,ath10k-sa-gpio-pin", gpio,
+ 					 WMI_SMART_ANT_GPIO_MAX);
+ 	if (ret)
+ 		return ret;

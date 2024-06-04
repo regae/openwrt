@@ -1,0 +1,43 @@
+From 1353efa61deed980496575556c9a0ea27393d799 Mon Sep 17 00:00:00 2001
+From: Yixiang Li <yixiang@google.com>
+Date: Thu, 27 Aug 2015 10:15:37 -0700
+Subject: [PATCH] CHROMIUM:PRIVATE:ath10k Set default antenna to 0x5 for 2G and
+ 5G
+
+BUG=chrome-os-partner:42969
+TEST=Run OTA performance test at HT20/2G and VHT80/5G
+
+Signed-off-by: Yixiang Li <yixiang@chromium.org>
+
+(cherry picked from commit 97de3068014a1911b0ce7dd177b4a0ccc6a7ab28)
+(source: wireless-3.18)
+
+Change-Id: I87b02829cdbedb7bb8d3a67239b53d085727930d
+Signed-off-by: Ashok Raj Nagarajan <arnagara@codeaurora.org>
+Reviewed-on: https://chromium-review.googlesource.com/310143
+Commit-Ready: Srinivasa duvvuri <sduvvuri@chromium.org>
+Tested-by: Srinivasa duvvuri <sduvvuri@chromium.org>
+Reviewed-by: Srinivasa duvvuri <sduvvuri@chromium.org>
+Reviewed-by: Yixiang Li <yixiang@google.com>
+---
+ drivers/net/wireless/ath/ath10k/wmi.h | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath10k/wmi.h b/drivers/net/wireless/ath/ath10k/wmi.h
+index f820904a5c3..955fd1f4a1b 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi.h
++++ b/drivers/net/wireless/ath/ath10k/wmi.h
+@@ -7455,8 +7455,8 @@ struct wmi_chan_survey_req_cmd {
+ #define WMI_SMART_ANT_DISABLED_ANT_SEL	2
+ #define WMI_SMART_ANT_DISABLED_MODE_PARALLEL	1
+ #define WMI_SMART_ANT_GPIO_MAX		4
+-#define ATH10K_DEFAULT_ANTENNA_2G 0
+-#define ATH10K_DEFAULT_ANTENNA_5G 6
++#define ATH10K_DEFAULT_ANTENNA_2G 5
++#define ATH10K_DEFAULT_ANTENNA_5G 5
+ 
+ struct wmi_pdev_set_smart_ant_cmd {
+ 	/* 0-disable 1- enable, 2 - set default antenna in disabled mode */
+-- 
+2.43.0
+

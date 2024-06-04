@@ -1,0 +1,223 @@
+From d624fa69556ee7f1e02fb3ff27e13253562ac98a Mon Sep 17 00:00:00 2001
+From: oliverwen <oliverwen@google.com>
+Date: Wed, 13 Jul 2016 17:43:42 -0700
+Subject: [PATCH] CHROMIUM: add 2G and 5G default antenna configs to mod params
+
+Make default 2G / 2G antenna configs configurable as module
+parameters. The params take effect in smart_ant_init,
+ath10k_start, wmi_op_gen_beacon_dma, and write_sa_enable_ops.
+
+TEST=manually on whirlwind. verified in sysfs.
+
+BUG=chrome-os-partner:51964
+CQ-DEPEND=CL:341560
+
+Signed-off-by: oliverwen <oliverwen@google.com>
+(cherry picked from commit a0469ecce9e7f92f6efee8a499a96f438f83eaaf)
+(source: wireless-3.18)
+
+Change-Id: I7626901d0303dc55df96f7b086387129c6a1cfde
+Reviewed-on: https://chromium-review.googlesource.com/341561
+Commit-Ready: Oliver Wen <oliverwen@chromium.org>
+Tested-by: Oliver Wen <oliverwen@chromium.org>
+Reviewed-by: Yixiang Li <yixiang@google.com>
+---
+ drivers/net/wireless/ath/ath10k/core.c         |  6 ++++++
+ .../net/wireless-4.2/ath/ath10k/debug_smart_ant.c  | 14 +++++++++-----
+ drivers/net/wireless/ath/ath10k/mac.c          |  9 +++++----
+ drivers/net/wireless/ath/ath10k/mac.h          |  3 +++
+ drivers/net/wireless/ath/ath10k/smart_ant.c    |  8 ++++++--
+ drivers/net/wireless/ath/ath10k/smart_ant.h    |  4 ++++
+ drivers/net/wireless/ath/ath10k/wmi.c          |  4 ++--
+ 7 files changed, 35 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath10k/core.c b/drivers/net/wireless/ath/ath10k/core.c
+index 4ac1e633157..500fe6df43d 100644
+--- a/drivers/net/wireless/ath/ath10k/core.c
++++ b/drivers/net/wireless/ath/ath10k/core.c
+@@ -39,6 +39,8 @@ static bool fw_diag_log;
+ #ifdef CPTCFG_ATH10K_SMART_ANTENNA
+ bool ath10k_enable_smart_antenna = false;
+ #endif
++u32 ath10k_default_antenna_2g = ATH10K_DEFAULT_ANTENNA_2G;
++u32 ath10k_default_antenna_5g = ATH10K_DEFAULT_ANTENNA_5G;
+ 
+ /* frame mode values are mapped as per enum ath10k_hw_txrx_mode */
+ unsigned int ath10k_frame_mode = ATH10K_HW_TXRX_NATIVE_WIFI;
+@@ -58,6 +60,8 @@ module_param_named(coredump_mask, ath10k
+ module_param_named(enable_smart_antenna, ath10k_enable_smart_antenna,
+ 		   bool, 0644);
+ #endif
++module_param_named(default_antenna_2g, ath10k_default_antenna_2g, uint, 0644);
++module_param_named(default_antenna_5g, ath10k_default_antenna_5g, uint, 0644);
+ 
+ MODULE_PARM_DESC(debug_mask, "Debugging mask");
+ MODULE_PARM_DESC(uart_print, "Uart target debugging");
+@@ -70,6 +74,8 @@ MODULE_PARM_DESC(fw_diag_log, "Diag base
+ #ifdef CPTCFG_ATH10K_SMART_ANTENNA
+ MODULE_PARM_DESC(enable_smart_antenna, "Enable smart antenna supprot in fw");
+ #endif
++MODULE_PARM_DESC(default_antenna_2g, "Default antenna config for 2G");
++MODULE_PARM_DESC(default_antenna_5g, "Default antenna config for 5G");
+ 
+ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
+ 	{
+diff --git a/drivers/net/wireless/ath/ath10k/debug_smart_ant.c b/drivers/net/wireless/ath/ath10k/debug_smart_ant.c
+index 689f9ae9df6..c0808985991 100644
+--- a/drivers/net/wireless/ath/ath10k/debug_smart_ant.c
++++ b/drivers/net/wireless/ath/ath10k/debug_smart_ant.c
+@@ -27,6 +27,7 @@ static ssize_t ath10k_write_sa_enable_ops(struct file *file,
+ 	struct ath10k *ar = file->private_data;
+ 	int ret;
+ 	u8 enable;
++	u32 default_antenna_config;
+ 
+ 	if (!ath10k_smart_ant_enabled(ar))
+ 		return -ENOTSUPP;
+@@ -37,13 +38,17 @@ static ssize_t ath10k_write_sa_enable_ops(struct file *file,
+ 	if (ar->smart_ant_info.enabled == enable)
+ 		return count;
+ 
++	default_antenna_config = ath10k_default_antenna_5g;
++	if (ar->phy_capability & WHAL_WLAN_11G_CAPABILITY)
++		default_antenna_config = ath10k_default_antenna_2g;
++
+ 	mutex_lock(&ar->conf_mutex);
+ 	if (enable) {
+ 		ret = ath10k_wmi_pdev_enable_smart_ant(
+ 				ar,
+ 				WMI_SMART_ANT_MODE_PARALLEL,
+-				ATH10K_SMART_ANT_DEFAULT_ANT,
+-				ATH10K_SMART_ANT_DEFAULT_ANT);
++				default_antenna_config,
++				default_antenna_config);
+ 		if (ret)
+ 			goto exit;
+ 
+@@ -58,9 +63,8 @@ static ssize_t ath10k_write_sa_enable_ops(struct file *file,
+ 		ret = ath10k_wmi_pdev_disable_smart_ant(
+ 				ar,
+ 				WMI_SMART_ANT_MODE_PARALLEL,
+-				ATH10K_SMART_ANT_DEFAULT_ANT,
+-				ATH10K_SMART_ANT_DEFAULT_ANT);
+-
++				default_antenna_config,
++				default_antenna_config);
+ 		if (ret)
+ 			goto exit;
+ 
+diff --git a/drivers/net/wireless/ath/ath10k/mac.c b/drivers/net/wireless/ath/ath10k/mac.c
+index ad9a2c54d8b..b2242ae0d75 100644
+--- a/drivers/net/wireless/ath/ath10k/mac.c
++++ b/drivers/net/wireless/ath/ath10k/mac.c
+@@ -5191,6 +5191,7 @@ static int ath10k_start(struct ieee80211_hw *hw)
+ {
+ 	struct ath10k *ar = hw->priv;
+ 	u32 param;
++	u32 default_antenna_config;
+ 	int ret = 0;
+ 	struct wmi_bb_timing_cfg_arg bb_timing = {0};
+ 
+@@ -5380,13 +5381,13 @@ static int ath10k_start(struct ieee80211_hw *hw)
+ 	}
+ 
+ 	if (test_bit(WMI_SERVICE_SMART_ANTENNA_HW_SUPPORT, ar->wmi.svc_map)) {
+-		u32 default_antenna_config = ATH10K_DEFAULT_ANTENNA_5G;
++		default_antenna_config = ath10k_default_antenna_5g;
+ 		/* use different smart antenna defaults for 2G and 5G radio.
+ 		 * use 2G confiuration for dual band radio.
+ 		 */
+-		if (ar->phy_capability & WHAL_WLAN_11G_CAPABILITY)
+-			default_antenna_config = ATH10K_DEFAULT_ANTENNA_2G;
+-
++		if (ar->phy_capability & WHAL_WLAN_11G_CAPABILITY) {
++			default_antenna_config = ath10k_default_antenna_2g;
++		}
+ 		ret = ath10k_wmi_pdev_sa_disabled_ant_sel(
+ 				ar,
+ 				WMI_SMART_ANT_DISABLED_MODE_PARALLEL,
+diff --git a/drivers/net/wireless/ath/ath10k/mac.h b/drivers/net/wireless/ath/ath10k/mac.h
+index f67795e57f7..e73012159d2 100644
+--- a/drivers/net/wireless/ath/ath10k/mac.h
++++ b/drivers/net/wireless/ath/ath10k/mac.h
+@@ -28,6 +28,9 @@ struct rfc1042_hdr {
+ 	__be16 snap_type;
+ } __packed;
+ 
++extern u32 ath10k_default_antenna_2g;
++extern u32 ath10k_default_antenna_5g;
++
+ struct ath10k *ath10k_mac_create(size_t priv_size);
+ void ath10k_mac_destroy(struct ath10k *ar);
+ int ath10k_mac_register(struct ath10k *ar);
+diff --git a/drivers/net/wireless/ath/ath10k/smart_ant.c b/drivers/net/wireless/ath/ath10k/smart_ant.c
+index 24a0d7d2984..d43f705e644 100644
+--- a/drivers/net/wireless/ath/ath10k/smart_ant.c
++++ b/drivers/net/wireless/ath/ath10k/smart_ant.c
+@@ -1488,7 +1488,9 @@ static void smart_ant_init_param(struct ath10k *ar)
+ 					&ar->smart_ant_info.smart_ant_params;
+ 
+ 	info->mode = WMI_SMART_ANT_MODE_PARALLEL;
+-	info->default_ant = ATH10K_SMART_ANT_DEFAULT_ANT;
++	info->default_ant = ath10k_default_antenna_5g;
++	if (ar->phy_capability & WHAL_WLAN_11G_CAPABILITY)
++		info->default_ant = ath10k_default_antenna_2g;
+ 	info->num_fallback_rate = ATH10K_SMART_ANT_FALLBACK_RATE_DEFAULT;
+ 	info->enabled_feedback = ATH10K_SMART_ANT_TX_FEEDBACK |
+ 				 ATH10K_SMART_ANT_RX_FEEDBACK;
+@@ -1522,7 +1524,9 @@ static void smart_ant_init_param(struct ath10k *ar)
+ 				ATH10K_SMART_ANT_NUM_PKT_THRESHOLD_40;
+ 	sa_params->num_pkt_min_threshod[ATH10K_SMART_ANT_BW_80] =
+ 				ATH10K_SMART_ANT_NUM_PKT_THRESHOLD_80;
+-	sa_params->default_tx_ant	= ATH10K_SMART_ANT_DEFAULT_ANT;
++	sa_params->default_tx_ant	= ath10k_default_antenna_5g;
++	if (ar->phy_capability & WHAL_WLAN_11G_CAPABILITY)
++		sa_params->default_tx_ant	= ath10k_default_antenna_2g;
+ 	sa_params->ant_change_ind	= 0;
+ 	sa_params->max_train_ppdu	= ATH10K_SMART_ANT_NUM_TRAIN_PPDU_MAX;
+ }
+diff --git a/drivers/net/wireless/ath/ath10k/smart_ant.h b/drivers/net/wireless/ath/ath10k/smart_ant.h
+index 0e4d38ce81a..bfdd0cf057f 100644
+--- a/drivers/net/wireless/ath/ath10k/smart_ant.h
++++ b/drivers/net/wireless/ath/ath10k/smart_ant.h
+@@ -37,6 +37,9 @@
+ #ifndef _SMART_ANT_H_
+ #define _SMART_ANT_H_
+ 
++extern u32 ath10k_default_antenna_2g;
++extern u32 ath10k_default_antenna_5g;
++
+ #define ATH10K_SMART_ANT_MAX_CHAINS	3
+ 
+ /* Bit positions 0 1 and 2 indicate number of non-training feedback
+@@ -58,7 +61,6 @@
+ #define ATH10K_SMART_ANT_RSSI_SAMPLE	10
+ #define ATH10K_SMART_ANT_PER_MAX	100
+ 
+-#define ATH10K_SMART_ANT_DEFAULT_ANT	5
+ #define ATH10K_PPDU_SIZE_MAX		32
+ 
+ /* Max number of antenna combinations 2 ^ max_supported_ant */
+diff --git a/drivers/net/wireless/ath/ath10k/wmi.c b/drivers/net/wireless/ath/ath10k/wmi.c
+index 81cf88cb9ab..05a799d2d3c 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi.c
++++ b/drivers/net/wireless/ath/ath10k/wmi.c
+@@ -7995,13 +7995,13 @@ ath10k_wmi_op_gen_beacon_dma(struct ath10k *ar, u32 vdev_id, const void *bcn,
+ 	cmd->frame_control = __cpu_to_le32(fc);
+ 	cmd->flags = 0;
+ 	if (test_bit(WMI_SERVICE_SMART_ANTENNA_HW_SUPPORT, ar->wmi.svc_map)) {
+-		cmd->antenna_mask = __cpu_to_le32(ATH10K_DEFAULT_ANTENNA_5G);
++		cmd->antenna_mask = __cpu_to_le32(ath10k_default_antenna_5g);
+ 		/* use different smart antenna defaults for 2G and 5G radio.
+ 		 * use 2G confiuration for dual band radio.
+ 		 */
+ 		if (ar->phy_capability & WHAL_WLAN_11G_CAPABILITY) {
+ 			cmd->antenna_mask =
+-				__cpu_to_le32(ATH10K_DEFAULT_ANTENNA_2G);
++				__cpu_to_le32(ath10k_default_antenna_2g);
+ 		}
+ 	} else {
+ 		cmd->antenna_mask = __cpu_to_le32(WMI_BCN_TX_REF_DEF_ANTENNA);
+-- 
+2.43.0
+
