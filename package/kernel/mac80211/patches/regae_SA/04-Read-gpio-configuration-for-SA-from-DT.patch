@@ -1,0 +1,183 @@
+From 57881ecf3380338a4eb1981a70682facd8ca91fc Mon Sep 17 00:00:00 2001
+From: oliverwen <oliverwen@google.com>
+Date: Fri, 24 Jun 2016 18:25:55 -0700
+Subject: [PATCH] CHROMIUM: Read gpio configuration for smart antenna from DT
+
+Read gpio pins and gpio functions used for smart antenna from
+DT.
+
+DT definition for ath10k gpio configuration will look like the following
+and can be added to corresponding pci devices.
+
+ pci {
+            pcie@0 {
+		    ...
+		    ...
+
+                    ath10k@0,0 {
+			    ...
+			    qcom,ath10k-sa-gpio = <1 2 3 4>;
+			    qcom,ath10k-sa-gpio-func = <1 2 3 4>;
+                    };
+            };
+    };
+
+TEST=build/boot. Load ath10k_core with modparam set enable_smart_antenna=1,
+bring up AP mode using hostapd and connect a station to this AP.
+Device was able to connect to the internet and load multiple websites.
+This testing is done on AP148.
+
+BUG=chrome-os-partner:51964
+CQ-DEPEND=CL:341523
+
+Signed-off-by: oliverwen <oliverwen@google.com>
+(cherry picked from commit 968c8deb726fdcd3b5c8038186400ff143c845d3)
+(source: wireless-3.18)
+
+Change-Id: I5005895cbcf76f3d4389723b0af7b9159f1137cf
+Reviewed-on: https://chromium-review.googlesource.com/341524
+Commit-Ready: Yixiang Li <yixiang@google.com>
+Tested-by: Oliver Wen <oliverwen@chromium.org>
+Reviewed-by: Yixiang Li <yixiang@google.com>
+---
+ drivers/net/wireless/ath/ath10k/hw.h  | 15 -----
+ drivers/net/wireless/ath/ath10k/wmi.c | 73 ++++++++++++++---------
+ 2 files changed, 46 insertions(+), 42 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath10k/hw.h b/drivers/net/wireless/ath/ath10k/hw.h
+index 874a9f706b9..8a5d4fcb531 100644
+--- a/drivers/net/wireless/ath/ath10k/hw.h
++++ b/drivers/net/wireless/ath/ath10k/hw.h
+@@ -1010,21 +1010,6 @@ enum ath10k_hw_4addr_pad {
+ 
+ #define DRAM_BASE_ADDRESS			0x00400000
+ 
+-/* GPIO pins and functions used for smart antenna */
+-#define WLAN_GPIOPIN_ANTCHAIN0		12
+-#define WLAN_GPIOPIN_ANTCHAIN1		13
+-#define WLAN_GPIOPIN_ANTCHAIN2		14
+-
+-#define WLAN_GPIOFUNC_ANTCHAIN0		5
+-#define WLAN_GPIOFUNC_ANTCHAIN1		WLAN_GPIOFUNC_ANTCHAIN0
+-#define WLAN_GPIOFUNC_ANTCHAIN2		WLAN_GPIOFUNC_ANTCHAIN0
+-
+-#define WLAN_GPIOPIN_ANT_SERIAL_STROBE	2
+-#define WLAN_GPIOPIN_ANT_SERIAL_DATA	3
+-
+-#define WLAN_GPIOFUNC_ANT_SERIAL_STROBE	5
+-#define WLAN_GPIOFUNC_ANT_SERIAL_DAT	WLAN_GPIOFUNC_ANT_SERIAL_STROBE
+-
+ #define PCIE_BAR_REG_ADDRESS			0x40030
+ 
+ #define MISSING 0
+diff --git a/drivers/net/wireless/ath/ath10k/wmi.c b/drivers/net/wireless/ath/ath10k/wmi.c
+index 33460342931..1a180e72b3f 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi.c
++++ b/drivers/net/wireless/ath/ath10k/wmi.c
+@@ -7,6 +7,7 @@
+ 
+ #include <linux/skbuff.h>
+ #include <linux/ctype.h>
++#include <linux/of.h>
+ 
+ #include "core.h"
+ #include "htc.h"
+@@ -9154,40 +9155,47 @@ ath10k_wmi_op_gen_chan_survey_send(struct ath10k *ar,
+ }
+ 
+ #ifdef CPTCFG_ATH10K_SMART_ANTENNA
+-static void
++static int
++ath10k_wmi_get_smart_ant_gpio_dt(struct ath10k *ar, u32 *gpio, u32 *gpio_func)
++{
++	struct device_node *node;
++	int ret;
++
++	node = ar->dev->of_node;
++	if (!node)
++		/* Device Tree is optional, don't print any warnings if
++		 * there's no node for ath10k.
++		 */
++		return -ENOENT;
++
++	ret = of_property_read_u32_array(node, "qcom,ath10k-sa-gpio", gpio,
++					 WMI_SMART_ANT_GPIO_MAX);
++	if (ret)
++		return ret;
++
++	ret = of_property_read_u32_array(node, "qcom,ath10k-sa-gpio-func",
++					 gpio_func, WMI_SMART_ANT_GPIO_MAX);
++	return ret;
++}
++
++static int
+ ath10k_wmi_fill_set_smart_ant(struct ath10k *ar,
+ 			      struct wmi_pdev_set_smart_ant_cmd *cmd,
+ 			      u32 mode, u32 tx_ant, u32 rx_ant)
+ {
++	int ret;
++
+ 	cmd->mode = __cpu_to_le32(mode);
+ 	cmd->rx_antenna = __cpu_to_le32(rx_ant);
+ 	cmd->tx_default_antenna = __cpu_to_le32(tx_ant);
+-	if (mode == WMI_SMART_ANT_MODE_SERIAL) {
+-		/* TODO: Get gpio pins from device tree */
+-		cmd->gpio_pin[0] =
+-			__cpu_to_le32(WLAN_GPIOPIN_ANT_SERIAL_STROBE);
+-		cmd->gpio_pin[1] = __cpu_to_le32(WLAN_GPIOPIN_ANT_SERIAL_DATA);
+-		cmd->gpio_pin[2] = 0;
+-		cmd->gpio_pin[3] = 0;
+-
+-		cmd->gpio_func[0] =
+-			__cpu_to_le32(WLAN_GPIOFUNC_ANT_SERIAL_STROBE);
+-		cmd->gpio_func[1] =
+-			__cpu_to_le32(WLAN_GPIOFUNC_ANT_SERIAL_STROBE);
+-		cmd->gpio_func[2] = 0;
+-		cmd->gpio_func[3] = 0;
+-	} else {
+-		/* TODO: Get gpio pins from device tree */
+-		cmd->gpio_pin[0] = __cpu_to_le32(WLAN_GPIOPIN_ANTCHAIN0);
+-		cmd->gpio_pin[1] = __cpu_to_le32(WLAN_GPIOPIN_ANTCHAIN1);
+-		cmd->gpio_pin[2] = __cpu_to_le32(WLAN_GPIOPIN_ANTCHAIN2);
+-		cmd->gpio_pin[3] = 0;
+ 
+-		cmd->gpio_func[0] = __cpu_to_le32(WLAN_GPIOFUNC_ANTCHAIN0);
+-		cmd->gpio_func[1] = __cpu_to_le32(WLAN_GPIOFUNC_ANTCHAIN1);
+-		cmd->gpio_func[2] = __cpu_to_le32(WLAN_GPIOFUNC_ANTCHAIN2);
+-		cmd->gpio_func[3] = 0;
+-	}
++	ret = ath10k_wmi_get_smart_ant_gpio_dt(ar, cmd->gpio_pin,
++					       cmd->gpio_func);
++	if (ret)
++		ath10k_dbg(ar, ATH10K_DBG_SMART_ANT,
++			   "DT entry is not found for SA gpio, failed to enable Smart Antenna\n");
++
++	return ret;
+ }
+ 
+ /* Sends initial smart antenna configuration. The configuration includes
+@@ -9200,6 +9208,7 @@ ath10k_wmi_op_gen_pdev_enable_smart_ant(struct ath10k *ar, u32 mode,
+ {
+ 	struct wmi_pdev_set_smart_ant_cmd *cmd;
+ 	struct sk_buff *skb;
++	int ret;
+ 
+ 	skb = ath10k_wmi_alloc_skb(ar, sizeof(*cmd));
+ 	if (!skb)
+@@ -9207,7 +9216,12 @@ ath10k_wmi_op_gen_pdev_enable_smart_ant(struct ath10k *ar, u32 mode,
+ 
+ 	cmd = (struct wmi_pdev_set_smart_ant_cmd *)skb->data;
+ 	cmd->enable = __cpu_to_le32(WMI_SMART_ANT_ENABLE);
+-	ath10k_wmi_fill_set_smart_ant(ar, cmd, mode, tx_ant, rx_ant);
++	ret = ath10k_wmi_fill_set_smart_ant(ar, cmd, mode, tx_ant, rx_ant);
++	if (ret) {
++		dev_kfree_skb_any(skb);
++		return ERR_PTR(ret);
++	}
++
+ 	ath10k_dbg(ar, ATH10K_DBG_WMI,
+ 		   "wmi pdev smart antenna enable, mode %d rx_ant %d def_tx_ant %d\n",
+ 		   mode, rx_ant, tx_ant);
+-- 
+2.43.0
+

@@ -1,0 +1,68 @@
+From dae0a0ca3651673bedad38cacd233a246b50b7eb Mon Sep 17 00:00:00 2001
+From: oliverwen <oliverwen@google.com>
+Date: Thu, 14 Jul 2016 09:47:59 -0700
+Subject: [PATCH] CHROMIUM: Fix maximum num peers for non-SA devices
+
+When smart antenna algorithm is enabled in the system, there is a mismatch
+in maximum number of peers for non-SA cards (aux-radio for example).
+Because of this, FW asserts.
+
+[  627.853622] ath10k_pci 0002:01:00.0: wmi mem_req_id 1 num_units 0
+num_unit_info 2 unit size 440 actual units 132
+[  627.862843] ath10k_pci 0002:01:00.0: firmware crashed!
+(uuid efdbbfa5-2ad6-4c42-ad16-91f594e0d818)
+[  627.862911] ath10k_pci 0002:01:00.0: qca988x hw2.0
+(0x4100016c, 0x043222ff sub 0000:0000) fw 10.2.4.70.9-2 fwapi 5 bdapi 1
+htt-ver 0.0 wmi-op 5 htt-op 2 cal dt max-sta 115 raw 0 hwcrypto 1 features
+no-p2p,raw-mode
+[  627.870831] ath10k_pci 0002:01:00.0: debug 1 debugfs 1 tracing 1
+dfs 1 testmode 1
+[  627.890915] ath10k_pci 0002:01:00.0: firmware register dump:
+[  627.897212] ath10k_pci 0002:01:00.0: [00]: 0x4100016C 0x000015B3
+0x009B51AB 0x00955B31
+[  627.903012] ath10k_pci 0002:01:00.0: [04]: 0x009B51AB 0x00060530
+0x00000018 0x00400000
+
+So fix this.
+
+TEST=stress test SA with max_num_peers = TARGET_10X_NUM_PEERS; and
+max_num_stations = TARGET_10X_NUM_STATIONS; there should be no FW crash,
+ans SA should be working properly.
+
+BUG=chrome-os-partner:51964
+CQ-DEPEND=CL:341564
+
+Signed-off-by: oliverwen <oliverwen@google.com>
+(cherry picked from commit  c8a17768f9037a128d0b4344bd499e2f2d9e89bf)
+(source: 4.2 wireless stack in 3.14 )
+
+Change-Id: I5847cfd07eb1b08831ec245c15ee76d31e6f8f72
+Reviewed-on: https://chromium-review.googlesource.com/341566
+Commit-Ready: Oliver Wen <oliverwen@chromium.org>
+Tested-by: Oliver Wen <oliverwen@chromium.org>
+Reviewed-by: Yixiang Li <yixiang@google.com>
+---
+ drivers/net/wireless/ath/ath10k/wmi.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath10k/wmi.c b/drivers/net/wireless/ath/ath10k/wmi.c
+index 15580ec28b0..30ddf335d40 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi.c
++++ b/drivers/net/wireless/ath/ath10k/wmi.c
+@@ -5614,6 +5614,13 @@ static void ath10k_wmi_event_service_ready_work(struct work_struct *work)
+ 		return;
+ 	}
+ 
++#ifdef CPTCFG_ATH10K_SMART_ANTENNA
++	if (!ath10k_smart_ant_enabled(ar)) {
++		ar->max_num_peers = TARGET_10X_NUM_PEERS;
++		ar->max_num_stations = TARGET_10X_NUM_STATIONS;
++	}
++#endif
++
+ 	if (test_bit(WMI_SERVICE_PEER_CACHING, ar->wmi.svc_map)) {
+ 		if (test_bit(ATH10K_FW_FEATURE_PEER_FLOW_CONTROL,
+ 			     ar->running_fw->fw_file.fw_features))
+-- 
+2.43.0
+

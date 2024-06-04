@@ -1,0 +1,50 @@
+From ecb5044ad0e0fece5f50cacfeb43e9d8317ecd92 Mon Sep 17 00:00:00 2001
+From: oliverwen <oliverwen@google.com>
+Date: Thu, 14 Jul 2016 10:00:29 -0700
+Subject: [PATCH] CHROMIUM: smart antenna algorithm: bugfix: unstable Perf
+ train
+
+ - fix the bug of unstable Perf train
+   bug: 1)Perf train is triggered too frequently. 2)Perf train result
+   not converging.
+   fix: disable Perf train by setting its period to be larger than
+   periodic train, so that Perf train will not be triggered.
+
+TEST=enable smart antenna log by
+echo 0x8000 > /sys/module/ath10k_core/parameters/debug_mask
+read smart antenna training log in /var/log/messages, "start Perf
+train" should not be printed out, while "start Periodic train" should
+be printed out periodically.
+
+BUG=chrome-os-partner:51964
+CQ-DEPEND=CL:341566
+
+Reviewed-on: https://chromium-review.googlesource.com/322840
+Change-Id: Ib2a07aad56d373e15ca518ca712846cc744b0263
+Signed-off-by: oliverwen <oliverwen@google.com>
+Reviewed-on: https://chromium-review.googlesource.com/341567
+Commit-Ready: Zhifeng Cai <caiz@chromium.org>
+Tested-by: Oliver Wen <oliverwen@chromium.org>
+Reviewed-by: Yixiang Li <yixiang@google.com>
+---
+ drivers/net/wireless/ath/ath10k/smart_ant.h | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath10k/smart_ant.h b/drivers/net/wireless/ath/ath10k/smart_ant.h
+index 9bcc63c62cd..a7620374197 100644
+--- a/drivers/net/wireless/ath/ath10k/smart_ant.h
++++ b/drivers/net/wireless/ath/ath10k/smart_ant.h
+@@ -81,8 +81,8 @@ extern u32 ath10k_default_antenna_5g;
+ #define ATH10K_SMART_ANT_PER_DIFF_THRESHOLD	3
+ #define ATH10K_SMART_ANT_PKT_LEN_DEFAULT	1536
+ #define ATH10K_SMART_ANT_TPUT_DELTA_DEFAULT	10
+-#define ATH10K_SMART_ANT_RETRAIN_INTVL		(2 * 60000)	/* msecs */
+-#define ATH10K_SMART_ANT_PERF_TRAIN_INTVL	2000		/* msecs */
++#define ATH10K_SMART_ANT_RETRAIN_INTVL		(1 * 60000)	/* msecs */
++#define ATH10K_SMART_ANT_PERF_TRAIN_INTVL	(3 * 60000)	/* msecs */
+ #define ATH10K_SMART_ANT_NUM_PKT_MIN		344
+ #define ATH10K_SMART_ANT_HYSTERISYS_DEFAULT	3
+ #define ATH10K_SMART_ANT_MIN_GOODPUT_THRESHOLD	6
+-- 
+2.43.0
+

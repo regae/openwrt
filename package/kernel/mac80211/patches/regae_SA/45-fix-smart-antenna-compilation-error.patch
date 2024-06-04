@@ -1,0 +1,86 @@
+From 32b69834deaf1d35ff89d940f44ce948306786ec Mon Sep 17 00:00:00 2001
+From: oliverwen <oliverwen@google.com>
+Date: Thu, 14 Jul 2016 10:11:56 -0700
+Subject: [PATCH] CHROMIUM: fix smart antenna compilation error
+
+With latest upstream 166de3f1895d, supp_tx_chainmask is not available from ar structure.
+So fix this.
+
+TEST=no FW crash, SA works properly.
+
+BUG=chrome-os-partner:51964
+CQ-DEPEND=CL:341567
+
+Change-Id: Ie21c3aa6ae69387ba02de83b2da5cbae5acf2696
+Signed-off-by: oliverwen <oliverwen@google.com>
+Reviewed-on: https://chromium-review.googlesource.com/341568
+Commit-Ready: Zhifeng Cai <caiz@chromium.org>
+Tested-by: Oliver Wen <oliverwen@chromium.org>
+Reviewed-by: Yixiang Li <yixiang@google.com>
+---
+ drivers/net/wireless/ath/ath10k/debug_smart_ant.c | 6 +++---
+ drivers/net/wireless/ath/ath10k/smart_ant.c       | 7 ++++---
+ 2 files changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath10k/debug_smart_ant.c b/drivers/net/wireless/ath/ath10k/debug_smart_ant.c
+index c7a05bf6c83..3a5338fcad7 100644
+--- a/drivers/net/wireless/ath/ath10k/debug_smart_ant.c
++++ b/drivers/net/wireless/ath/ath10k/debug_smart_ant.c
+@@ -154,7 +154,7 @@ static ssize_t ath10k_write_sa_tx_ant_ops(struct file *file,
+ 	if (kstrtou32(sptr, 0, &txant))
+ 		return -EINVAL;
+ 
+-	if (txant > ar->supp_tx_chainmask) {
++	if (txant > ((1 << ar->num_rf_chains) - 1)) {
+ 		ath10k_err(ar, "Invalid tx antenna config\n");
+ 		return -EINVAL;
+ 	}
+@@ -225,7 +225,7 @@ static ssize_t ath10k_write_sa_rx_ant_ops(struct file *file,
+ 	if (kstrtou8_from_user(user_buf, count, 0, &rxant))
+ 		return -EINVAL;
+ 
+-	if (rxant > ar->supp_rx_chainmask) {
++	if (rxant > ((1 << ar->num_rf_chains) - 1)) {
+ 		ath10k_err(ar, "Invalid Rx antenna config\n");
+ 		return -EINVAL;
+ 	}
+@@ -449,7 +449,7 @@ static ssize_t ath10k_write_sa_train_info_ops(struct file *file,
+ 		arg.antennas[i] = arg.antennas[0];
+ 	}
+ 
+-	if (arg.antennas[0] > ar->supp_tx_chainmask) {
++	if (arg.antennas[0] > ((1 << ar->num_rf_chains) - 1)) {
+ 		ath10k_err(ar, "Invalid tx ant for trianing\n");
+ 		return -EINVAL;
+ 	}
+diff --git a/drivers/net/wireless/ath/ath10k/smart_ant.c b/drivers/net/wireless/ath/ath10k/smart_ant.c
+index 842648471f3..a4f1a7f4a7e 100644
+--- a/drivers/net/wireless/ath/ath10k/smart_ant.c
++++ b/drivers/net/wireless/ath/ath10k/smart_ant.c
+@@ -1471,11 +1471,12 @@ static void smart_ant_tx_fb_fill(struct ath10k *ar,
+ 
+ static int smart_ant_get_streams(struct ath10k *ar)
+ {
+-	u32 num_chains = 0;
++	u32 num_chains = 0, supp_tx_chainmask;
+ 	int i;
+ 
++	supp_tx_chainmask = (1 << ar->num_rf_chains) - 1;
+ 	for (i = 0; i < ATH10K_SMART_ANT_MAX_CHAINS; i++) {
+-		if (ar->supp_tx_chainmask & (1 << i))
++		if (supp_tx_chainmask & (1 << i))
+ 			num_chains++;
+ 	}
+ 
+@@ -1725,7 +1726,7 @@ int ath10k_smart_ant_sta_connect(struct ath10k *ar,
+ 	struct ath10k_smart_ant_sta *smart_ant_sta;
+ 	struct ath10k_smart_ant_info *info = &ar->smart_ant_info;
+ 	struct ath10k_smart_ant_train_stats *train_stats;
+-	u8 tx_chainmask = ar->cfg_tx_chainmask ? : ar->supp_tx_chainmask;
++	u8 tx_chainmask = ar->cfg_tx_chainmask ? : (1 << ar->num_rf_chains) - 1;
+ 	int i, ret;
+ 
+ 	lockdep_assert_held(&ar->conf_mutex);
+-- 
+2.43.0
+

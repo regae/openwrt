@@ -1,0 +1,50 @@
+From 41abca79a296889b6d6bc9bf98f8d1b400b8aab8 Mon Sep 17 00:00:00 2001
+From: oliverwen <oliverwen@google.com>
+Date: Wed, 13 Jul 2016 17:15:38 -0700
+Subject: [PATCH] CHROMIUM: smart antenna algorithm: bugfix: default rx/tx ant
+ when sa is disabled by debugfs
+
+ - fix the bug of default rx/tx ant when sa is disabled by debugfs.
+   bug: default rx/tx ant are hard coded to 0
+   fix: default rx/tx ant are set to ATH10K_SMART_ANT_DEFAULT_ANT
+
+TEST=disable sa by setting smart_ant_enable=0 at run time, read default
+rx ant through echo 0x14018
+               >/sys/kernel/debug/ieee80211/phy0/ath10k/reg_addr,
+rx ant setting should be ATH10K_SMART_ANT_DEFAULT_ANT.
+
+BUG=chrome-os-partner:51964
+CQ-DEPEND=CL:341558
+
+Signed-off-by: oliverwen <oliverwen@google.com>
+(cherry picked from commit bc4b25fbd96cc954448ab679db9e41a2eeb50d83)
+(source: wireless-3.18)
+
+Change-Id: Ide20caa9126e33dbbf2245696e66102ff6e36ef0
+Reviewed-on: https://chromium-review.googlesource.com/341559
+Commit-Ready: Yixiang Li <yixiang@google.com>
+Tested-by: Oliver Wen <oliverwen@chromium.org>
+Reviewed-by: Yixiang Li <yixiang@google.com>
+---
+ drivers/net/wireless/ath/ath10k/debug_smart_ant.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/ath/ath10k/debug_smart_ant.c b/drivers/net/wireless/ath/ath10k/debug_smart_ant.c
+index cced0264fba..689f9ae9df6 100644
+--- a/drivers/net/wireless/ath/ath10k/debug_smart_ant.c
++++ b/drivers/net/wireless/ath/ath10k/debug_smart_ant.c
+@@ -57,7 +57,10 @@ static ssize_t ath10k_write_sa_enable_ops(struct file *file,
+ 	} else {
+ 		ret = ath10k_wmi_pdev_disable_smart_ant(
+ 				ar,
+-				WMI_SMART_ANT_MODE_PARALLEL, 0, 0);
++				WMI_SMART_ANT_MODE_PARALLEL,
++				ATH10K_SMART_ANT_DEFAULT_ANT,
++				ATH10K_SMART_ANT_DEFAULT_ANT);
++
+ 		if (ret)
+ 			goto exit;
+ 
+-- 
+2.43.0
+

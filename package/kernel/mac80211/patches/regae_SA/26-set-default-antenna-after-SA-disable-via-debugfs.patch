@@ -1,0 +1,202 @@
+From 086248b42e15dd5a7eccfda37fb56910f6759a0e Mon Sep 17 00:00:00 2001
+From: oliverwen <oliverwen@google.com>
+Date: Thu, 14 Jul 2016 09:28:14 -0700
+Subject: [PATCH] CHROMIUM: ath10k: set default antenna after SA disable via
+ debugfs
+
+Currently, when you disable smart antenna through debugfs, default antenna
+is set to 0. This is because, when you disable SA, we send the command
+WMI_SMART_ANT_DISABLE (0) to FW and inturn FW would clear all SA related
+configurations. As a result, you end up having the default antenna to 0.
+To set the default antenna like how we do during driver load, we need to
+use the command WMI_SMART_ANT_DISABLED_ANT_SEL (2).
+
+TEST=disable sa by setting smart_ant_enable=0 at run time, read default
+rx ant through echo 0x14018
+                    >/sys/kernel/debug/ieee80211/phy0/ath10k/reg_addr,
+rx ant setting should be ATH10K_SMART_ANT_DEFAULT_ANT.
+
+BUG=chrome-os-partner:51964
+CQ-DEPEND=CL:341561
+
+Signed-off-by: oliverwen <oliverwen@google.com>
+(cherry picked from commit 5a851c6122174797a4dd0fc624e496f3e0b4786c)
+(source: wireless-3.18)
+
+Change-Id: I72694cda4522e4bb5af6c37a3cfd6502d37bc77b
+Reviewed-on: https://chromium-review.googlesource.com/341562
+Commit-Ready: Oliver Wen <oliverwen@chromium.org>
+Tested-by: Oliver Wen <oliverwen@chromium.org>
+Reviewed-by: Yixiang Li <yixiang@google.com>
+---
+ .../wireless-4.2/ath/ath10k/debug_smart_ant.c |  4 +--
+ .../net/wireless-4.2/ath/ath10k/smart_ant.c   |  8 +++++-
+ .../net/wireless-4.2/ath/ath10k/smart_ant.h   |  2 +-
+ drivers/net/wireless/ath/ath10k/wmi-ops.h | 20 -------------
+ drivers/net/wireless/ath/ath10k/wmi.c     | 28 -------------------
+ 5 files changed, 10 insertions(+), 52 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath10k/debug_smart_ant.c b/drivers/net/wireless/ath/ath10k/debug_smart_ant.c
+index c0808985991..c7a05bf6c83 100644
+--- a/drivers/net/wireless/ath/ath10k/debug_smart_ant.c
++++ b/drivers/net/wireless/ath/ath10k/debug_smart_ant.c
+@@ -60,9 +60,9 @@ static ssize_t ath10k_write_sa_enable_ops(struct file *file,
+ 			goto exit;
+ 		ar->pktlog_filter |= ATH10K_PKTLOG_SMART_ANT;
+ 	} else {
+-		ret = ath10k_wmi_pdev_disable_smart_ant(
++		ret = ath10k_wmi_pdev_sa_disabled_ant_sel(
+ 				ar,
+-				WMI_SMART_ANT_MODE_PARALLEL,
++				WMI_SMART_ANT_DISABLED_MODE_PARALLEL,
+ 				default_antenna_config,
+ 				default_antenna_config);
+ 		if (ret)
+diff --git a/drivers/net/wireless/ath/ath10k/smart_ant.c b/drivers/net/wireless/ath/ath10k/smart_ant.c
+index d43f705e644..04bbf4b7757 100644
+--- a/drivers/net/wireless/ath/ath10k/smart_ant.c
++++ b/drivers/net/wireless/ath/ath10k/smart_ant.c
+@@ -1893,6 +1893,7 @@ int ath10k_smart_ant_set_default(struct ath10k *ar,
+ void ath10k_smart_ant_disable(struct ath10k *ar, struct ath10k_vif *arvif)
+ {
+ 	struct ath10k_smart_ant_info *info = &ar->smart_ant_info;
++	u32 default_antenna_config = ath10k_default_antenna_5g;
+ 	int ret;
+ 
+ 	lockdep_assert_held(&ar->conf_mutex);
+@@ -1912,8 +1913,13 @@ void ath10k_smart_ant_disable(struct ath10k *ar, struct ath10k_vif *arvif)
+ 	if (info->num_enabled_vif != 0)
+ 		return;
+ 
++	if (ar->phy_capability & WHAL_WLAN_11G_CAPABILITY)
++		default_antenna_config = ath10k_default_antenna_2g;
++
+ 	/* Disable smart antenna logic in fw */
+-	ret = ath10k_wmi_pdev_disable_smart_ant(ar, info->mode, 0, 0);
++	ret = ath10k_wmi_pdev_sa_disabled_ant_sel(ar, info->mode,
++						  default_antenna_config,
++						  default_antenna_config);
+ 	if (ret) {
+ 		ath10k_err(ar, "Wmi command to disable smart antenna is failed\n");
+ 		return;
+diff --git a/drivers/net/wireless/ath/ath10k/smart_ant.h b/drivers/net/wireless/ath/ath10k/smart_ant.h
+index bfdd0cf057f..9bcc63c62cd 100644
+--- a/drivers/net/wireless/ath/ath10k/smart_ant.h
++++ b/drivers/net/wireless/ath/ath10k/smart_ant.h
+@@ -525,7 +525,7 @@ int ath10k_smart_ant_set_default(struct ath10k *ar,
+ 				 struct ath10k_vif *arvif);
+ 
+ /* This API reverts the configurations done in ath10k_smart_ant_enable().
+- * ath10k_wmi_pdev_disable_smart_ant needs to be called to disable
++ * ath10k_wmi_pdev_sa_disabled_ant_sel needs to be called to disable
+  * smart antenna logic in fw.
+  */
+ void ath10k_smart_ant_disable(struct ath10k *ar, struct ath10k_vif *arvif);
+diff --git a/drivers/net/wireless/ath/ath10k/wmi-ops.h b/drivers/net/wireless/ath/ath10k/wmi-ops.h
+index 2a7555c2402..96951ce177f 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi-ops.h
++++ b/drivers/net/wireless/ath/ath10k/wmi-ops.h
+@@ -240,9 +240,6 @@ struct wmi_ops {
+ 	struct sk_buff *(*gen_pdev_enable_smart_ant)(struct ath10k *ar,
+ 						     u32 mode, u32 tx_ant,
+ 						     u32 rx_ant);
+-	struct sk_buff *(*gen_pdev_disable_smart_ant)(struct ath10k *ar,
+-						      u32 mode, u32 tx_ant,
+-						      u32 rx_ant);
+ 	struct sk_buff *(*gen_peer_set_smart_tx_ant)(struct ath10k *ar,
+ 						     u32 vdev_id,
+ 						     const u8 *macaddr,
+@@ -1771,23 +1768,6 @@ ath10k_wmi_pdev_enable_smart_ant(struct ath10k *ar, u32 mode,
+ 				   ar->wmi.cmd->pdev_set_smart_ant_cmdid);
+ }
+ 
+-static inline int
+-ath10k_wmi_pdev_disable_smart_ant(struct ath10k *ar, u32 mode,
+-				  u32 tx_ant, u32 rx_ant)
+-{
+-	struct sk_buff *skb;
+-
+-	if (!ar->wmi.ops->gen_pdev_disable_smart_ant)
+-		return -EOPNOTSUPP;
+-
+-	skb = ar->wmi.ops->gen_pdev_disable_smart_ant(ar, mode, tx_ant, rx_ant);
+-	if (IS_ERR(skb))
+-		return PTR_ERR(skb);
+-
+-	return ath10k_wmi_cmd_send(ar, skb,
+-				   ar->wmi.cmd->pdev_set_smart_ant_cmdid);
+-}
+-
+ static inline int
+ ath10k_wmi_peer_set_smart_tx_ant(struct ath10k *ar, u32 vdev_id,
+ 				 const u8 *macaddr, const u32 *ant_rate_list,
+diff --git a/drivers/net/wireless/ath/ath10k/wmi.c b/drivers/net/wireless/ath/ath10k/wmi.c
+index 05a799d2d3c..15580ec28b0 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi.c
++++ b/drivers/net/wireless/ath/ath10k/wmi.c
+@@ -9371,30 +9371,6 @@ ath10k_wmi_op_gen_pdev_enable_smart_ant(struct ath10k *ar, u32 mode,
+ 	return skb;
+ }
+ 
+-/* Sends configurations to disable smart antenna, configuration includes bit
+- * indicating disable, GPIOs, mode for which it was enabled and tx/rx antennas
+- * to be reset, usually 0 is sent in tx/rx antenna in this command.
+- */
+-static struct sk_buff *
+-ath10k_wmi_op_gen_pdev_disable_smart_ant(struct ath10k *ar, u32 mode,
+-					 u32 tx_ant, u32 rx_ant)
+-{
+-	struct wmi_pdev_set_smart_ant_cmd *cmd;
+-	struct sk_buff *skb;
+-
+-	skb = ath10k_wmi_alloc_skb(ar, sizeof(*cmd));
+-	if (!skb)
+-		return ERR_PTR(-ENOMEM);
+-
+-	cmd = (struct wmi_pdev_set_smart_ant_cmd *)skb->data;
+-	cmd->enable = __cpu_to_le32(WMI_SMART_ANT_DISABLE);
+-	ath10k_wmi_fill_set_smart_ant(ar, cmd, mode, tx_ant, rx_ant);
+-	ath10k_dbg(ar, ATH10K_DBG_WMI,
+-		   "wmi pdev smart antenna disable, mode %d rx_ant %d def_tx_ant %d\n",
+-		   mode, rx_ant, tx_ant);
+-	return skb;
+-}
+-
+ /* Set tx antenna for a particular peer. Tx antennas is an array
+  * containing antennas for every rate fallback retry. After this
+  * antenna configuration all the frames to that particular peer
+@@ -9591,7 +9567,6 @@ static const struct wmi_ops wmi_ops = {
+ 	/* .gen_adaptive_qcs not implemented */
+ 	/* .gen_pdev_enable_adaptive_cca not implemented */
+ 	/* .gen_pdev_enable_smart_ant not implemented */
+-	/* .gen_pdev_disable_smart_ant not implemented */
+ 	/* .gen_peer_set_smart_tx_ant not implemented */
+ 	/* .gen_pdev_set_rx_ant not implemented */
+ 	/* .gen_peer_cfg_smart_ant_fb not implemented */
+@@ -9670,7 +9645,6 @@ static const struct wmi_ops wmi_10_1_ops = {
+ 	/* .gen_adaptive_qcs not implemented */
+ 	/* .gen_pdev_enable_adaptive_cca not implemented */
+ 	/* .gen_pdev_enable_smart_ant not implemented */
+-	/* .gen_pdev_disable_smart_ant not implemented */
+ 	/* .gen_peer_set_smart_tx_ant not implemented */
+ 	/* .gen_pdev_set_rx_ant not implemented */
+ 	/* .gen_peer_cfg_smart_ant_fb not implemented */
+@@ -9748,7 +9722,6 @@ static const struct wmi_ops wmi_10_2_ops = {
+ 	/* .gen_pdev_enable_adaptive_cca not implemented */
+ #ifdef CPTCFG_ATH10K_SMART_ANTENNA
+ 	.gen_pdev_enable_smart_ant  = ath10k_wmi_op_gen_pdev_enable_smart_ant,
+-	.gen_pdev_disable_smart_ant  = ath10k_wmi_op_gen_pdev_disable_smart_ant,
+ 	.gen_peer_set_smart_tx_ant = ath10k_wmi_op_gen_peer_set_smart_tx_ant,
+ 	.gen_pdev_set_rx_ant = ath10k_wmi_op_gen_pdev_set_rx_ant,
+ 	.gen_peer_cfg_smart_ant_fb = ath10k_wmi_op_gen_peer_cfg_smart_ant,
+@@ -9835,7 +9808,6 @@ static const struct wmi_ops wmi_10_2_4_ops = {
+ 	/* .gen_adaptive_qcs not implemented */
+ #ifdef CPTCFG_ATH10K_SMART_ANTENNA
+ 	.gen_pdev_enable_smart_ant  = ath10k_wmi_op_gen_pdev_enable_smart_ant,
+-	.gen_pdev_disable_smart_ant  = ath10k_wmi_op_gen_pdev_disable_smart_ant,
+ 	.gen_peer_set_smart_tx_ant = ath10k_wmi_op_gen_peer_set_smart_tx_ant,
+ 	.gen_pdev_set_rx_ant = ath10k_wmi_op_gen_pdev_set_rx_ant,
+ 	.gen_peer_cfg_smart_ant_fb = ath10k_wmi_op_gen_peer_cfg_smart_ant,
+-- 
+2.43.0
+
