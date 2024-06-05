@@ -1,0 +1,74 @@
+From 0c509f8d8e5a6a03933a112d4487fd1c005442d6 Mon Sep 17 00:00:00 2001
+From: Robert Marko <robimarko@gmail.com>
+Date: Fri, 24 Dec 2021 19:39:02 +0100
+Subject: [PATCH 05/11] SSDK: config: add kernel 5.15
+
+This is purely to identify it and be able to set
+flags correctly.
+
+Signed-off-by: Robert Marko <robimarko@gmail.com>
+---
+ config            | 6 +++++-
+ make/linux_opt.mk | 4 ++--
+ 2 files changed, 7 insertions(+), 3 deletions(-)
+
+--- a/config
++++ b/config
+@@ -24,6 +24,10 @@ ifeq ($(KVER),$(filter 5.4%,$(KVER)))
+ 	OS_VER=5_4
+ endif
+ 
++ifeq ($(KVER),$(filter 5.15%,$(KVER)))
++OS_VER=5_15
++endif
++
+ ifeq ($(KVER), 3.4.0)
+ 	OS_VER=3_4
+ endif
+@@ -114,7 +118,7 @@ endif
+ 	ifeq ($(KVER), 3.18.21)
+ 		CPU_CFLAG=-D__LINUX_ARM_ARCH__=7  -DMODULE -fno-common -DCONFIG_MMU -D$(BOARD_NAME)
+ 	endif
+-	ifeq ($(KVER),$(filter 4.4% 5.4%,$(KVER)))
++	ifeq ($(KVER),$(filter 4.4% 5.4% 5.15%,$(KVER)))
+ 		CPU_CFLAG=-D__LINUX_ARM_ARCH__=7  -DMODULE -fno-common -DCONFIG_MMU -D$(BOARD_NAME)
+ 	endif
+ 	
+@@ -122,7 +126,7 @@ ifeq ($(KVER),$(filter 3.14%,$(KVER)))
+ 		CPU_CFLAG= -DMODULE -nostdinc -D$(BOARD_NAME) -mlittle-endian -Wundef -Wstrict-prototypes -Wno-trigraphs -Werror -fno-strict-aliasing -fno-common -Wno-format-security -fno-delete-null-pointer-checks -O2 -fno-dwarf2-cfi-asm -mabi=aapcs-linux -mno-thumb-interwork -mfpu=vfp -funwind-tables -marm -D__LINUX_ARM_ARCH__=7 -march=armv7-a -msoft-float -Uarm -Wframe-larger-than=1024 -fno-stack-protector -Wno-unused-but-set-variable -fomit-frame-pointer -g -Wdeclaration-after-statement -Wno-pointer-sign -fno-strict-overflow -fconserve-stack -Werror=implicit-int -DCC_HAVE_ASM_GOTO    -D"KBUILD_STR(s)=\#s" -D"KBUILD_BASENAME=KBUILD_STR(mem)"
+ 	endif
+ 	
+-	ifeq ($(KVER),$(filter 4.9% 4.4% 5.4%,$(KVER)))
++	ifeq ($(KVER),$(filter 4.9% 4.4% 5.4% 5.15%,$(KVER)))
+ 		CPU_CFLAG= -DMODULE -nostdinc -D$(BOARD_NAME) -mlittle-endian -Wundef -Wstrict-prototypes -Wno-trigraphs -Werror -fno-strict-aliasing -fno-common -Wno-format-security -fno-delete-null-pointer-checks -Os -fno-dwarf2-cfi-asm -mabi=aapcs-linux -mno-thumb-interwork -mfpu=vfp -funwind-tables -marm -D__LINUX_ARM_ARCH__=7 -march=armv7-a -msoft-float -Uarm -Wframe-larger-than=2048 -fno-stack-protector -Wno-unused-but-set-variable -fomit-frame-pointer -g -Wdeclaration-after-statement -Wno-pointer-sign -fno-strict-overflow -fconserve-stack -Werror=implicit-int -DCC_HAVE_ASM_GOTO    -D"KBUILD_STR(s)=\#s" -D"KBUILD_BASENAME=KBUILD_STR(mem)"
+ 	endif
+ 	
+@@ -132,7 +136,7 @@ endif
+ endif
+ 
+ ifeq ($(ARCH), arm64)
+-	ifeq ($(KVER),$(filter 4.1% 4.4% 4.9% 5.4%,$(KVER)))
++	ifeq ($(KVER),$(filter 4.1% 4.4% 4.9% 5.4% 5.15%,$(KVER)))
+ 		CPU_CFLAG=  -DMODULE -Os -pipe -march=armv8-a -mcpu=cortex-a53+crypto -fno-caller-saves -fno-strict-aliasing -Werror -fno-common -Wno-format-security -Wno-pointer-sign -Wno-unused-but-set-variable -Wno-error=unused-result -mcmodel=large
+ 	endif
+ endif
+--- a/make/linux_opt.mk
++++ b/make/linux_opt.mk
+@@ -437,7 +437,7 @@ ifeq (KSLIB, $(MODULE_TYPE))
+       KASAN_SHADOW_SCALE_SHIFT := 3
+   endif
+ 
+-  ifeq (5_4, $(OS_VER))
++  ifeq (5_4 5_15, $(OS_VER))
+       ifeq ($(ARCH), arm64)
+           KASAN_OPTION += -DKASAN_SHADOW_SCALE_SHIFT=$(KASAN_SHADOW_SCALE_SHIFT)
+        endif
+@@ -468,7 +468,7 @@ ifeq (KSLIB, $(MODULE_TYPE))
+ 
+   endif
+ 
+-  ifeq ($(OS_VER),$(filter 4_4 5_4, $(OS_VER)))
++  ifeq ($(OS_VER),$(filter 4_4 5_4 5_15, $(OS_VER)))
+                 MODULE_CFLAG += -DKVER34
+                 MODULE_CFLAG += -DKVER32
+             MODULE_CFLAG += -DLNX26_22

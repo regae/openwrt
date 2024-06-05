@@ -5,9 +5,16 @@ PKG_RELEASE:=2
 
 PKG_SOURCE_URL:=https://git.codelinaro.org/clo/qsdk/oss/lklm/qca-ssdk.git
 PKG_SOURCE_PROTO:=git
+ifeq ($(CONFIG_TARGET_ipq806x), y)
+PKG_SOURCE_DATE:=2022-09-12
+PKG_SOURCE_VERSION:=628b22bc3d5ee81414b75ab3de6a255c82754dec
+PKG_MIRROR_HASH:=b44105ee7f27a4893c375c7839f3b0808fb762781a9bf511d133e6b7085a3233
+PATCH_DIR:=patches_ipq806x
+else
 PKG_SOURCE_DATE:=2024-04-17
 PKG_SOURCE_VERSION:=3d060f7ad70d087f6b0452abe79ab6d042e8cd53
 PKG_MIRROR_HASH:=6f5e390b294e699491584094f5d7eb941de6237ad8c5320191e9e306fbcd8eb5
+endif
 
 PKG_FLAGS:=nonshared
 PKG_BUILD_PARALLEL:=1
@@ -22,7 +29,11 @@ define KernelPackage/qca-ssdk
   SUBMENU:=Network Devices
   TITLE:=Qualcom SSDK switch driver
   DEPENDS:=@(TARGET_qualcommax)
+ifeq ($(CONFIG_TARGET_ipq806x), y)
+  FILES:=$(PKG_BUILD_DIR)/build/bin/qca-ssdk.ko
+else
   FILES:=$(PKG_BUILD_DIR)/qca-ssdk.ko
+endif
   AUTOLOAD:=$(call AutoLoad,30,qca-ssdk)
 endef
 
@@ -43,20 +54,25 @@ MAKE_FLAGS+= \
 	ARCH=$(LINUX_KARCH) \
 	TARGET_SUFFIX=$(CONFIG_TARGET_SUFFIX) \
 	GCC_VERSION=$(GCC_VERSION) \
-	EXTRA_CFLAGS="-fno-stack-protector -I$(STAGING_DIR)/usr/include" \
+	EXTRA_CFLAGS="-Wno-enum-conversion -fno-stack-protector -I$(STAGING_DIR)/usr/include" \
 	SoC=$(CONFIG_TARGET_SUBTARGET) \
 	SHELL="$(BASH)" \
-	PTP_FEATURE=disable SWCONFIG_FEATURE=disable \
+	PTP_FEATURE=disable \
 	ISISC_ENABLE=disable IN_QCA803X_PHY=FALSE \
-	IN_QCA808X_PHY=FALSE IN_MALIBU_PHY=FALSE \
 	$(LNX_CONFIG_OPTS)
 
-ifeq ($(CONFIG_TARGET_SUBTARGET), "ipq807x")
-    MAKE_FLAGS+= CHIP_TYPE=HPPE
-endif
-
-ifeq ($(CONFIG_TARGET_SUBTARGET), "ipq60xx")
-    MAKE_FLAGS+= CHIP_TYPE=CPPE
+ifeq ($(CONFIG_TARGET_ipq806x), y)
+    MAKE_FLAGS+= \
+		CHIP_TYPE=NONHK_CHIP SWCONFIG_FEATURE=enable \
+		IN_MALIBU_PHY=TRUE IN_QCA808X_PHY=TRUE
+else ifeq ($(CONFIG_TARGET_SUBTARGET), "ipq807x")
+    MAKE_FLAGS+= \
+		CHIP_TYPE=HPPE IN_MALIBU_PHY=FALSE \
+		SWCONFIG_FEATURE=disable IN_QCA808X_PHY=FALSE
+else ifeq ($(CONFIG_TARGET_SUBTARGET), "ipq60xx")
+    MAKE_FLAGS+= \
+		CHIP_TYPE=CPPE IN_MALIBU_PHY=FALSE \
+		SWCONFIG_FEATURE=disable IN_QCA808X_PHY=FALSE
 endif
 
 
