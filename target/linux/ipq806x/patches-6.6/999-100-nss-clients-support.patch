@@ -1,0 +1,2922 @@
+--- a/drivers/net/bonding/bond_3ad.c 
++++ b/drivers/net/bonding/bond_3ad.c 
+@@ -113,8 +113,40 @@ static void ad_update_actor_keys(struct port *port, bo
+ static void ad_marker_response_received(struct bond_marker *marker,
+ 					struct port *port);
+ static void ad_update_actor_keys(struct port *port, bool reset);
++
++struct bond_cb __rcu *bond_cb;
++
++int bond_register_cb(struct bond_cb *cb)
++{
++	struct bond_cb *lag_cb;
++
++	lag_cb = kzalloc(sizeof(*lag_cb), GFP_ATOMIC | __GFP_NOWARN);
++	if (!lag_cb) {
++		return -1;
++	}
++
++	memcpy((void *)lag_cb, (void *)cb, sizeof(*cb));
++
++	rcu_read_lock();
++	rcu_assign_pointer(bond_cb, lag_cb);
++	rcu_read_unlock();
++	return 0;
++}
++EXPORT_SYMBOL(bond_register_cb);
++
++void bond_unregister_cb(void)
++{
++	struct bond_cb *lag_cb_main;
+ 
++	rcu_read_lock();
++	lag_cb_main = rcu_dereference(bond_cb);
++	rcu_assign_pointer(bond_cb, NULL);
++	rcu_read_unlock();
+ 
++	kfree(lag_cb_main);
++}
++EXPORT_SYMBOL(bond_unregister_cb);
++
+ /* ================= api to bonding and kernel code ================== */
+ 
+ /**
+@@ -422,7 +454,6 @@ static u16 __ad_timer_to_ticks(u16 timer_type, u16 par
+ 
+ 	return retval;
+ }
+-
+ 
+ /* ================= ad_rx_machine helper functions ================== */
+ 
+@@ -1063,6 +1094,28 @@ static void ad_mux_machine(struct port *port, bool *up
+ 			ad_disable_collecting_distributing(port,
+ 							   update_slave_arr);
+ 			port->ntt = true;
++
++			/* Send a notificaton about change in state of this
++			 * port. We only want to handle case where port moves
++			 * from AD_MUX_COLLECTING_DISTRIBUTING ->
++			 * AD_MUX_ATTACHED.
++			 */
++			if (bond_slave_is_up(port->slave) &&
++			    (last_state == AD_MUX_COLLECTING_DISTRIBUTING)) {
++				struct bond_cb *lag_cb_main;
++
++				rcu_read_lock();
++				lag_cb_main = rcu_dereference(bond_cb);
++				if (lag_cb_main &&
++				    lag_cb_main->bond_cb_link_down) {
++					struct net_device *dev;
++
++					dev = port->slave->dev;
++					lag_cb_main->bond_cb_link_down(dev);
++				}
++				rcu_read_unlock();
++			}
++
+ 			break;
+ 		case AD_MUX_COLLECTING_DISTRIBUTING:
+ 			port->actor_oper_port_state |= LACP_STATE_COLLECTING;
+@@ -1907,6 +1960,7 @@ static void ad_enable_collecting_distributing(struct p
+ 					      bool *update_slave_arr)
+ {
+ 	if (port->aggregator->is_active) {
++		struct bond_cb *lag_cb_main;
+ 		slave_dbg(port->slave->bond->dev, port->slave->dev,
+ 			  "Enabling port %d (LAG %d)\n",
+ 			  port->actor_port_number,
+@@ -1914,6 +1968,14 @@ static void ad_enable_collecting_distributing(struct p
+ 		__enable_port(port);
+ 		/* Slave array needs update */
+ 		*update_slave_arr = true;
++
++		rcu_read_lock();
++		lag_cb_main = rcu_dereference(bond_cb);
++
++		if (lag_cb_main && lag_cb_main->bond_cb_link_up)
++			lag_cb_main->bond_cb_link_up(port->slave->dev);
++
++		rcu_read_unlock();
+ 	}
+ }
+ 
+@@ -2677,6 +2739,102 @@ int bond_3ad_get_active_agg_info(struct bonding *bond,
+ 	rcu_read_unlock();
+ 
+ 	return ret;
++}
++
++/* bond_3ad_get_tx_dev - Calculate egress interface for a given packet,
++ * for a LAG that is configured in 802.3AD mode
++ * @skb: pointer to skb to be egressed
++ * @src_mac: pointer to source L2 address
++ * @dst_mac: pointer to destination L2 address
++ * @src: pointer to source L3 address
++ * @dst: pointer to destination L3 address
++ * @protocol: L3 protocol id from L2 header
++ * @bond_dev: pointer to bond master device
++ *
++ * If @skb is NULL, bond_xmit_hash is used to calculate hash using L2/L3
++ * addresses.
++ *
++ * Returns: Either valid slave device, or NULL otherwise
++ */
++struct net_device *bond_3ad_get_tx_dev(struct sk_buff *skb, u8 *src_mac,
++				       u8 *dst_mac, void *src,
++				       void *dst, u16 protocol,
++				       struct net_device *bond_dev,
++				       __be16 *layer4hdr)
++{
++	struct bonding *bond = netdev_priv(bond_dev);
++	struct aggregator *agg;
++	struct ad_info ad_info;
++	struct list_head *iter;
++	struct slave *slave;
++	struct slave *first_ok_slave = NULL;
++	u32 hash = 0;
++	int slaves_in_agg;
++	int slave_agg_no = 0;
++	int agg_id;
++
++	if (__bond_3ad_get_active_agg_info(bond, &ad_info)) {
++		pr_debug("%s: Error: __bond_3ad_get_active_agg_info failed\n",
++			 bond_dev->name);
++		return NULL;
++	}
++
++	slaves_in_agg = ad_info.ports;
++	agg_id = ad_info.aggregator_id;
++
++	if (slaves_in_agg == 0) {
++		pr_debug("%s: Error: active aggregator is empty\n",
++			 bond_dev->name);
++		return NULL;
++	}
++
++	if (skb) {
++		hash = bond_xmit_hash(bond, skb);
++		slave_agg_no = hash % slaves_in_agg;
++	} else {
++		if (bond->params.xmit_policy != BOND_XMIT_POLICY_LAYER23 &&
++		    bond->params.xmit_policy != BOND_XMIT_POLICY_LAYER2 &&
++		    bond->params.xmit_policy != BOND_XMIT_POLICY_LAYER34) {
++			pr_debug("%s: Error: Unsupported hash policy for 802.3AD fast path\n",
++				 bond_dev->name);
++			return NULL;
++		}
++
++		hash = bond_xmit_hash_without_skb(src_mac, dst_mac,
++						  src, dst, protocol,
++						  bond_dev, layer4hdr);
++		slave_agg_no = hash % slaves_in_agg;
++	}
++
++	bond_for_each_slave_rcu(bond, slave, iter) {
++		agg = SLAVE_AD_INFO(slave)->port.aggregator;
++		if (!agg || agg->aggregator_identifier != agg_id)
++			continue;
++
++		if (slave_agg_no >= 0) {
++			if (!first_ok_slave && bond_slave_can_tx(slave))
++				first_ok_slave = slave;
++			slave_agg_no--;
++			continue;
++		}
++
++		if (bond_slave_can_tx(slave))
++			return slave->dev;
++	}
++
++	if (slave_agg_no >= 0) {
++		pr_err("%s: Error: Couldn't find a slave to tx on for aggregator ID %d\n",
++		       bond_dev->name, agg_id);
++		return NULL;
++	}
++
++	/* we couldn't find any suitable slave after the agg_no, so use the
++	 * first suitable found, if found.
++	 */
++	if (first_ok_slave)
++		return first_ok_slave->dev;
++
++	return NULL;
+ }
+ 
+ int bond_3ad_lacpdu_recv(const struct sk_buff *skb, struct bonding *bond,
+--- a/drivers/net/bonding/bond_main.c 
++++ b/drivers/net/bonding/bond_main.c 
+@@ -250,6 +250,7 @@ static struct flow_dissector flow_keys_bonding __read_
+ };
+ 
+ static struct flow_dissector flow_keys_bonding __read_mostly;
++static unsigned long bond_id_mask = 0xFFFFFFF0;
+ 
+ /*-------------------------- Forward declarations ---------------------------*/
+ 
+@@ -336,6 +337,19 @@ static bool bond_xdp_check(struct bonding *bond)
+ 	}
+ }
+ 
++int bond_get_id(struct net_device *bond_dev)
++{
++	struct bonding *bond;
++
++	if (!((bond_dev->priv_flags & IFF_BONDING) &&
++	      (bond_dev->flags & IFF_MASTER)))
++		return -EINVAL;
++
++	bond = netdev_priv(bond_dev);
++	return bond->id;
++}
++EXPORT_SYMBOL(bond_get_id);
++
+ /*---------------------------------- VLAN -----------------------------------*/
+ 
+ /* In the following 2 functions, bond_vlan_rx_add_vid and bond_vlan_rx_kill_vid,
+@@ -1153,6 +1167,21 @@ void bond_change_active_slave(struct bonding *bond, st
+ 
+ 			if (BOND_MODE(bond) == BOND_MODE_8023AD)
+ 				bond_3ad_handle_link_change(new_active, BOND_LINK_UP);
++
++			if (bond->params.mode == BOND_MODE_XOR) {
++				struct bond_cb *lag_cb_main;
++
++				rcu_read_lock();
++				lag_cb_main = rcu_dereference(bond_cb);
++				if (lag_cb_main &&
++				    lag_cb_main->bond_cb_link_up) {
++					struct net_device *dev;
++
++					dev = new_active->dev;
++					lag_cb_main->bond_cb_link_up(dev);
++				}
++				rcu_read_unlock();
++			}
+ 
+ 			if (bond_is_lb(bond))
+ 				bond_alb_handle_link_change(bond, new_active, BOND_LINK_UP);
+@@ -1777,6 +1806,7 @@ int bond_enslave(struct net_device *bond_dev, struct n
+ 	const struct net_device_ops *slave_ops = slave_dev->netdev_ops;
+ 	struct slave *new_slave = NULL, *prev_slave;
+ 	struct sockaddr_storage ss;
++	struct bond_cb *lag_cb_main;
+ 	int link_reporting;
+ 	int res = 0, i;
+ 
+@@ -2218,6 +2248,13 @@ int bond_enslave(struct net_device *bond_dev, struct n
+ 		   bond_is_active_slave(new_slave) ? "an active" : "a backup",
+ 		   new_slave->link != BOND_LINK_DOWN ? "an up" : "a down");
+ 
++	rcu_read_lock();
++	lag_cb_main = rcu_dereference(bond_cb);
++	if (lag_cb_main && lag_cb_main->bond_cb_enslave)
++		lag_cb_main->bond_cb_enslave(slave_dev);
++
++	rcu_read_unlock();
++
+ 	/* enslave is successful */
+ 	bond_queue_slave_event(new_slave);
+ 	return 0;
+@@ -2283,6 +2320,13 @@ err_undo_flags:
+ 		}
+ 	}
+ 
++	rcu_read_lock();
++	lag_cb_main = rcu_dereference(bond_cb);
++	if (lag_cb_main && lag_cb_main->bond_cb_enslave)
++		lag_cb_main->bond_cb_enslave(slave_dev);
++
++	rcu_read_unlock();
++
+ 	return res;
+ }
+ 
+@@ -2304,6 +2348,7 @@ static int __bond_release_one(struct net_device *bond_
+ 	struct bonding *bond = netdev_priv(bond_dev);
+ 	struct slave *slave, *oldcurrent;
+ 	struct sockaddr_storage ss;
++	struct bond_cb *lag_cb_main;
+ 	int old_flags = bond_dev->flags;
+ 	netdev_features_t old_features = bond_dev->features;
+ 
+@@ -2326,6 +2371,13 @@ static int __bond_release_one(struct net_device *bond_
+ 
+ 	bond_set_slave_inactive_flags(slave, BOND_SLAVE_NOTIFY_NOW);
+ 
++	rcu_read_lock();
++	lag_cb_main = rcu_dereference(bond_cb);
++	if (lag_cb_main && lag_cb_main->bond_cb_release)
++		lag_cb_main->bond_cb_release(slave_dev);
++
++	rcu_read_unlock();
++
+ 	bond_sysfs_slave_del(slave);
+ 
+ 	/* recompute stats just before removing the slave */
+@@ -2644,6 +2696,8 @@ static void bond_miimon_commit(struct bonding *bond)
+ 	struct slave *slave, *primary, *active;
+ 	bool do_failover = false;
+ 	struct list_head *iter;
++	struct net_device *slave_dev = NULL;
++	struct bond_cb *lag_cb_main;
+ 
+ 	ASSERT_RTNL();
+ 
+@@ -2680,6 +2734,10 @@ static void bond_miimon_commit(struct bonding *bond)
+ 				/* make it immediately active */
+ 				bond_set_active_slave(slave);
+ 			}
++
++			if ((bond->params.mode == BOND_MODE_XOR) &&
++			    (!slave_dev))
++				slave_dev = slave->dev;
+ 
+ 			slave_info(bond->dev, slave->dev, "link status definitely up, %u Mbps %s duplex\n",
+ 				   slave->speed == SPEED_UNKNOWN ? 0 : slave->speed,
+@@ -2727,6 +2785,14 @@ do_failover:
+ 		unblock_netpoll_tx();
+ 	}
+ 
++	rcu_read_lock();
++	lag_cb_main = rcu_dereference(bond_cb);
++
++	if (slave_dev && lag_cb_main && lag_cb_main->bond_cb_link_up)
++		lag_cb_main->bond_cb_link_up(slave_dev);
++
++	rcu_read_unlock();
++
+ 	bond_set_carrier(bond);
+ }
+ 
+@@ -3746,6 +3812,211 @@ static bool bond_flow_ip(struct sk_buff *skb, struct f
+ 	return ep->h_dest[5] ^ ep->h_source[5] ^ be16_to_cpu(ep->h_proto);
+ }
+ 
++/* Extract the appropriate headers based on bond's xmit policy */
++static bool bond_flow_dissect_without_skb(struct bonding *bond,
++					  u8 *src_mac, u8 *dst_mac,
++					  void *psrc, void *pdst,
++					  u16 protocol, __be16 *layer4hdr,
++					  struct flow_keys *fk)
++{
++	u32 *src = NULL;
++	u32 *dst = NULL;
++
++	fk->ports.ports = 0;
++	src = (uint32_t *)psrc;
++	dst = (uint32_t *)pdst;
++
++	if (protocol == htons(ETH_P_IP)) {
++		fk->addrs.v4addrs.src = src[0];
++		fk->addrs.v4addrs.dst = dst[0];
++	} else if (protocol == htons(ETH_P_IPV6)) {
++		memcpy(&fk->addrs.v6addrs.src, src, sizeof(struct in6_addr));
++		memcpy(&fk->addrs.v6addrs.dst, dst, sizeof(struct in6_addr));
++	} else {
++		return false;
++	}
++	if ((bond->params.xmit_policy == BOND_XMIT_POLICY_LAYER34) &&
++	    (layer4hdr))
++		fk->ports.ports = *layer4hdr;
++
++	return true;
++}
++
++/* bond_xmit_hash_without_skb - Applies load balancing algorithm for a packet,
++ * to calculate hash for a given set of L2/L3 addresses. Does not
++ * calculate egress interface.
++ */
++uint32_t bond_xmit_hash_without_skb(u8 *src_mac, u8 *dst_mac,
++				    void *psrc, void *pdst, u16 protocol,
++				    struct net_device *bond_dev,
++				    __be16 *layer4hdr)
++{
++	struct bonding *bond = netdev_priv(bond_dev);
++	struct flow_keys flow;
++	u32 hash = 0;
++
++	if (bond->params.xmit_policy == BOND_XMIT_POLICY_LAYER2 ||
++	    !bond_flow_dissect_without_skb(bond, src_mac, dst_mac, psrc,
++					   pdst, protocol, layer4hdr, &flow))
++		return (dst_mac[5] ^ src_mac[5]);
++
++	if (bond->params.xmit_policy == BOND_XMIT_POLICY_LAYER23)
++		hash = dst_mac[5] ^ src_mac[5];
++	else if (layer4hdr)
++		hash = (__force u32)flow.ports.ports;
++
++	hash ^= (__force u32)flow_get_u32_dst(&flow) ^
++		(__force u32)flow_get_u32_src(&flow);
++	hash ^= (hash >> 16);
++	hash ^= (hash >> 8);
++
++	return hash;
++}
++
++/* bond_xor_get_tx_dev - Calculate egress interface for a given packet for a LAG
++ * that is configured in balance-xor mode
++ * @skb: pointer to skb to be egressed
++ * @src_mac: pointer to source L2 address
++ * @dst_mac: pointer to destination L2 address
++ * @src: pointer to source L3 address in network order
++ * @dst: pointer to destination L3 address in network order
++ * @protocol: L3 protocol
++ * @bond_dev: pointer to bond master device
++ *
++ * If @skb is NULL, bond_xmit_hash_without_skb is used to calculate hash using
++ * L2/L3 addresses.
++ *
++ * Returns: Either valid slave device, or NULL otherwise
++ */
++static struct net_device *bond_xor_get_tx_dev(struct sk_buff *skb,
++					      u8 *src_mac, u8 *dst_mac,
++					      void *src, void *dst,
++					      u16 protocol,
++					      struct net_device *bond_dev,
++					      __be16 *layer4hdr)
++{
++	struct bonding *bond = netdev_priv(bond_dev);
++	int slave_cnt = READ_ONCE(bond->slave_cnt);
++	int slave_id = 0, i = 0;
++	u32 hash;
++	struct list_head *iter;
++	struct slave *slave;
++
++	if (slave_cnt == 0) {
++		pr_debug("%s: Error: No slave is attached to the interface\n",
++			 bond_dev->name);
++		return NULL;
++	}
++
++	if (skb) {
++		hash = bond_xmit_hash(bond, skb);
++		slave_id = hash % slave_cnt;
++	} else {
++		if (bond->params.xmit_policy != BOND_XMIT_POLICY_LAYER23 &&
++		    bond->params.xmit_policy != BOND_XMIT_POLICY_LAYER2	&&
++		    bond->params.xmit_policy != BOND_XMIT_POLICY_LAYER34) {
++			pr_debug("%s: Error: Unsupported hash policy for balance-XOR fast path\n",
++				 bond_dev->name);
++			return NULL;
++		}
++
++		hash = bond_xmit_hash_without_skb(src_mac, dst_mac, src,
++						  dst, protocol, bond_dev,
++						  layer4hdr);
++		slave_id = hash % slave_cnt;
++	}
++
++	i = slave_id;
++
++	/* Here we start from the slave with slave_id */
++	bond_for_each_slave_rcu(bond, slave, iter) {
++		if (--i < 0) {
++			if (bond_slave_can_tx(slave))
++				return slave->dev;
++		}
++	}
++
++	/* Here we start from the first slave up to slave_id */
++	i = slave_id;
++	bond_for_each_slave_rcu(bond, slave, iter) {
++		if (--i < 0)
++			break;
++		if (bond_slave_can_tx(slave))
++			return slave->dev;
++	}
++
++	return NULL;
++}
++
++/* bond_get_tx_dev - Calculate egress interface for a given packet.
++ *
++ * Supports 802.3AD and balance-xor modes
++ *
++ * @skb: pointer to skb to be egressed, if valid
++ * @src_mac: pointer to source L2 address
++ * @dst_mac: pointer to destination L2 address
++ * @src: pointer to source L3 address in network order
++ * @dst: pointer to destination L3 address in network order
++ * @protocol: L3 protocol id from L2 header
++ * @bond_dev: pointer to bond master device
++ *
++ * Returns: Either valid slave device, or NULL for un-supported LAG modes
++ */
++struct net_device *bond_get_tx_dev(struct sk_buff *skb, uint8_t *src_mac,
++				   u8 *dst_mac, void *src,
++				   void *dst, u16 protocol,
++				   struct net_device *bond_dev,
++				   __be16 *layer4hdr)
++{
++	struct bonding *bond;
++
++	if (!bond_dev)
++		return NULL;
++
++	if (!((bond_dev->priv_flags & IFF_BONDING) &&
++	      (bond_dev->flags & IFF_MASTER)))
++		return NULL;
++
++	bond = netdev_priv(bond_dev);
++
++	switch (bond->params.mode) {
++	case BOND_MODE_XOR:
++		return bond_xor_get_tx_dev(skb, src_mac, dst_mac,
++					   src, dst, protocol,
++					   bond_dev, layer4hdr);
++	case BOND_MODE_8023AD:
++		return bond_3ad_get_tx_dev(skb, src_mac, dst_mac,
++					   src, dst, protocol,
++					   bond_dev, layer4hdr);
++	default:
++		return NULL;
++	}
++}
++EXPORT_SYMBOL(bond_get_tx_dev);
++
++/* In bond_xmit_xor() , we determine the output device by using a pre-
++ * determined xmit_hash_policy(), If the selected device is not enabled,
++ * find the next active slave.
++ */
++static int bond_xmit_xor(struct sk_buff *skb, struct net_device *dev)
++{
++	struct bonding *bond = netdev_priv(dev);
++	struct net_device *outdev;
++
++	outdev = bond_xor_get_tx_dev(skb, NULL, NULL, NULL,
++				     NULL, 0, dev, NULL);
++	if (!outdev)
++		goto out;
++
++	bond_dev_queue_xmit(bond, skb, outdev);
++	goto final;
++out:
++	/* no suitable interface, frame not sent */
++	dev_kfree_skb(skb);
++final:
++	return NETDEV_TX_OK;
++}
++
+ static bool bond_flow_ip(struct sk_buff *skb, struct flow_keys *fk, const void *data,
+ 			 int hlen, __be16 l2_proto, int *nhoff, int *ip_proto, bool l34)
+ {
+@@ -4886,15 +5157,22 @@ static netdev_tx_t bond_3ad_xor_xmit(struct sk_buff *s
+ 				     struct net_device *dev)
+ {
+ 	struct bonding *bond = netdev_priv(dev);
+-	struct bond_up_slave *slaves;
+-	struct slave *slave;
++	struct net_device *outdev = NULL;
+ 
+-	slaves = rcu_dereference(bond->usable_slaves);
+-	slave = bond_xmit_3ad_xor_slave_get(bond, skb, slaves);
+-	if (likely(slave))
+-		return bond_dev_queue_xmit(bond, skb, slave->dev);
++	outdev = bond_3ad_get_tx_dev(skb, NULL, NULL, NULL,
++				     NULL, 0, dev, NULL);
+ 
+-	return bond_tx_drop(dev, skb);
++	if (!outdev)
++		goto out;
++
++	bond_dev_queue_xmit(bond, skb, outdev);
++	goto final;
++
++out:
++	dev_kfree_skb(skb);
++
++final:
++	return NETDEV_TX_OK;
+ }
+ 
+ /* in broadcast mode, we send everything to all usable interfaces. */
+@@ -5138,8 +5416,9 @@ static netdev_tx_t __bond_start_xmit(struct sk_buff *s
+ 		return bond_xmit_roundrobin(skb, dev);
+ 	case BOND_MODE_ACTIVEBACKUP:
+ 		return bond_xmit_activebackup(skb, dev);
+-	case BOND_MODE_8023AD:
+ 	case BOND_MODE_XOR:
++		return bond_xmit_xor(skb, dev);
++	case BOND_MODE_8023AD:
+ 		return bond_3ad_xor_xmit(skb, dev);
+ 	case BOND_MODE_BROADCAST:
+ 		return bond_xmit_broadcast(skb, dev);
+@@ -5447,6 +5726,10 @@ static void bond_destructor(struct net_device *bond_de
+ 		destroy_workqueue(bond->wq);
+ 
+ 	free_percpu(bond->rr_tx_counter);
++
++	if (bond->id != (~0U))
++		clear_bit(bond->id, &bond_id_mask);
++
+ }
+ 
+ void bond_setup(struct net_device *bond_dev)
+@@ -6021,6 +6304,14 @@ int bond_create(struct net *net, const char *name)
+ 
+ 	bond_work_init_all(bond);
+ 
++
++	bond = netdev_priv(bond_dev);
++	bond->id = ~0U;
++	if (bond_id_mask != (~0UL)) {
++		bond->id = (u32)ffz(bond_id_mask);
++		set_bit(bond->id, &bond_id_mask);
++	}
++
+ out:
+ 	rtnl_unlock();
+ 	return res;
+--- a/drivers/net/ifb.c 
++++ b/drivers/net/ifb.c 
+@@ -121,9 +121,34 @@ resched:
+ resched:
+ 		txp->tasklet_pending = 1;
+ 		tasklet_schedule(&txp->ifb_tasklet);
++	}
++
++}
++
++void ifb_update_offload_stats(struct net_device *dev, struct pcpu_sw_netstats *offload_stats)
++{
++	struct ifb_dev_private *dp;
++	struct ifb_q_private *txp;
++
++	if (!dev || !offload_stats) {
++		return;
++	}
++
++	if (!(dev->priv_flags_ext & IFF_EXT_IFB)) {
++		return;
+ 	}
+ 
++	dp = netdev_priv(dev);
++	txp = dp->tx_private;
++
++	u64_stats_update_begin(&txp->rx_stats.sync);
++	txp->rx_stats.packets += u64_stats_read(&offload_stats->rx_packets);
++	txp->rx_stats.bytes += u64_stats_read(&offload_stats->rx_bytes);
++	txp->tx_stats.packets += u64_stats_read(&offload_stats->tx_packets);
++	txp->tx_stats.bytes += u64_stats_read(&offload_stats->tx_bytes);
++	u64_stats_update_end(&txp->rx_stats.sync);
+ }
++EXPORT_SYMBOL(ifb_update_offload_stats);
+ 
+ static void ifb_stats64(struct net_device *dev,
+ 			struct rtnl_link_stats64 *stats)
+@@ -224,6 +249,7 @@ static void ifb_setup(struct net_device *dev)
+ 	dev->flags |= IFF_NOARP;
+ 	dev->flags &= ~IFF_MULTICAST;
+ 	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
++	dev->priv_flags_ext |= IFF_EXT_IFB;	/* Mark the device as an IFB device. */
+ 	netif_keep_dst(dev);
+ 	eth_hw_addr_random(dev);
+ 	dev->needs_free_netdev = true;
+--- a/drivers/net/ppp/ppp_generic.c 
++++ b/drivers/net/ppp/ppp_generic.c 
+@@ -1,4 +1,20 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ **************************************************************************
++ * Copyright (c) 2016, The Linux Foundation.  All rights reserved.
++ * Permission to use, copy, modify, and/or distribute this software for
++ * any purpose with or without fee is hereby granted, provided that the
++ * above copyright notice and this permission notice appear in all copies.
++ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
++ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
++ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
++ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
++ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
++ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
++ * OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
++ **************************************************************************
++ */
++
+ /*
+  * Generic PPP layer for Linux.
+  *
+@@ -252,6 +268,24 @@ struct ppp_net {
+ /* Compare multilink sequence numbers (assumed to be 32 bits wide) */
+ #define seq_before(a, b)	((s32)((a) - (b)) < 0)
+ #define seq_after(a, b)		((s32)((a) - (b)) > 0)
++
++/*
++ * Registration/Unregistration methods
++ * for PPP channel connect and disconnect event notifications.
++ */
++RAW_NOTIFIER_HEAD(ppp_channel_connection_notifier_list);
++
++void ppp_channel_connection_register_notify(struct notifier_block *nb)
++{
++	raw_notifier_chain_register(&ppp_channel_connection_notifier_list, nb);
++}
++EXPORT_SYMBOL_GPL(ppp_channel_connection_register_notify);
++
++void ppp_channel_connection_unregister_notify(struct notifier_block *nb)
++{
++	raw_notifier_chain_unregister(&ppp_channel_connection_notifier_list, nb);
++}
++EXPORT_SYMBOL_GPL(ppp_channel_connection_unregister_notify);
+ 
+ /* Prototypes. */
+ static int ppp_unattached_ioctl(struct net *net, struct ppp_file *pf,
+@@ -3452,6 +3486,7 @@ ppp_connect_channel(struct channel *pch, int unit)
+ 	struct ppp_net *pn;
+ 	int ret = -ENXIO;
+ 	int hdrlen;
++	int notify = 0;
+ 
+ 	pn = ppp_pernet(pch->chan_net);
+ 
+@@ -3484,6 +3519,8 @@ ppp_connect_channel(struct channel *pch, int unit)
+ 	++ppp->n_channels;
+ 	pch->ppp = ppp;
+ 	refcount_inc(&ppp->file.refcnt);
++	notify = 1;
++
+ 	ppp_unlock(ppp);
+ 	ret = 0;
+ 
+@@ -3491,6 +3528,14 @@ ppp_connect_channel(struct channel *pch, int unit)
+ 	write_unlock_bh(&pch->upl);
+  out:
+ 	mutex_unlock(&pn->all_ppp_mutex);
++
++	if (notify && ppp && ppp->dev) {
++		dev_hold(ppp->dev);
++		raw_notifier_call_chain(&ppp_channel_connection_notifier_list,
++					   PPP_CHANNEL_CONNECT, ppp->dev);
++		dev_put(ppp->dev);
++	}
++
+ 	return ret;
+ }
+ 
+@@ -3508,6 +3553,13 @@ ppp_disconnect_channel(struct channel *pch)
+ 	pch->ppp = NULL;
+ 	write_unlock_bh(&pch->upl);
+ 	if (ppp) {
++		if (ppp->dev) {
++			dev_hold(ppp->dev);
++			raw_notifier_call_chain(&ppp_channel_connection_notifier_list,
++					   PPP_CHANNEL_DISCONNECT, ppp->dev);
++			dev_put(ppp->dev);
++		}
++
+ 		/* remove it from the ppp unit's list */
+ 		ppp_lock(ppp);
+ 		list_del(&pch->clist);
+@@ -3585,8 +3637,212 @@ static void *unit_find(struct idr *p, int n)
+ static void *unit_find(struct idr *p, int n)
+ {
+ 	return idr_find(p, n);
++}
++
++/* Updates the PPP interface statistics. */
++void ppp_update_stats(struct net_device *dev, unsigned long rx_packets,
++		      unsigned long rx_bytes, unsigned long tx_packets,
++		      unsigned long tx_bytes, unsigned long rx_errors,
++		      unsigned long tx_errors, unsigned long rx_dropped,
++		      unsigned long tx_dropped)
++{
++	struct ppp *ppp;
++
++	if (!dev)
++		return;
++
++	if (dev->type != ARPHRD_PPP)
++		return;
++
++	ppp = netdev_priv(dev);
++
++	ppp_xmit_lock(ppp);
++	ppp->stats64.tx_packets += tx_packets;
++	ppp->stats64.tx_bytes += tx_bytes;
++	ppp->dev->stats.tx_errors += tx_errors;
++	ppp->dev->stats.tx_dropped += tx_dropped;
++	if (tx_packets)
++		ppp->last_xmit = jiffies;
++	ppp_xmit_unlock(ppp);
++
++	ppp_recv_lock(ppp);
++	ppp->stats64.rx_packets += rx_packets;
++	ppp->stats64.rx_bytes += rx_bytes;
++	ppp->dev->stats.rx_errors += rx_errors;
++	ppp->dev->stats.rx_dropped += rx_dropped;
++	if (rx_packets)
++		ppp->last_recv = jiffies;
++	ppp_recv_unlock(ppp);
++}
++
++/* Returns true if Compression is enabled on PPP device
++ */
++bool ppp_is_cp_enabled(struct net_device *dev)
++{
++	struct ppp *ppp;
++	bool flag = false;
++
++	if (!dev)
++		return false;
++
++	if (dev->type != ARPHRD_PPP)
++		return false;
++
++	ppp = netdev_priv(dev);
++	ppp_lock(ppp);
++	flag = !!(ppp->xstate & SC_COMP_RUN) || !!(ppp->rstate & SC_DECOMP_RUN);
++	ppp_unlock(ppp);
++
++	return flag;
++}
++EXPORT_SYMBOL(ppp_is_cp_enabled);
++
++/* Returns >0 if the device is a multilink PPP netdevice, 0 if not or < 0 if
++ * the device is not PPP.
++ */
++int ppp_is_multilink(struct net_device *dev)
++{
++	struct ppp *ppp;
++	unsigned int flags;
++
++	if (!dev)
++		return -1;
++
++	if (dev->type != ARPHRD_PPP)
++		return -1;
++
++	ppp = netdev_priv(dev);
++	ppp_lock(ppp);
++	flags = ppp->flags;
++	ppp_unlock(ppp);
++
++	if (flags & SC_MULTILINK)
++		return 1;
++
++	return 0;
+ }
++EXPORT_SYMBOL(ppp_is_multilink);
+ 
++/* ppp_channel_get_protocol()
++ *	Call this to obtain the underlying protocol of the PPP channel,
++ *	e.g. PX_PROTO_OE
++ *
++ * NOTE: Some channels do not use PX sockets so the protocol value may be very
++ * different for them.
++ * NOTE: -1 indicates failure.
++ * NOTE: Once you know the channel protocol you may then either cast 'chan' to
++ * its sub-class or use the channel protocol specific API's as provided by that
++ * channel sub type.
++ */
++int ppp_channel_get_protocol(struct ppp_channel *chan)
++{
++	if (!chan->ops->get_channel_protocol)
++		return -1;
++
++	return chan->ops->get_channel_protocol(chan);
++}
++EXPORT_SYMBOL(ppp_channel_get_protocol);
++
++/* ppp_channel_hold()
++ *	Call this to hold a channel.
++ *
++ * Returns true on success or false if the hold could not happen.
++ *
++ * NOTE: chan must be protected against destruction during this call -
++ * either by correct locking etc. or because you already have an implicit
++ * or explicit hold to the channel already and this is an additional hold.
++ */
++bool ppp_channel_hold(struct ppp_channel *chan)
++{
++	if (!chan->ops->hold)
++		return false;
++
++	chan->ops->hold(chan);
++	return true;
++}
++EXPORT_SYMBOL(ppp_channel_hold);
++
++/* ppp_channel_release()
++ *	Call this to release a hold you have upon a channel
++ */
++void ppp_channel_release(struct ppp_channel *chan)
++{
++	chan->ops->release(chan);
++}
++EXPORT_SYMBOL(ppp_channel_release);
++
++/* ppp_hold_channels()
++ *	Returns the PPP channels of the PPP device, storing each one into
++ *	channels[].
++ *
++ * channels[] has chan_sz elements.
++ * This function returns the number of channels stored, up to chan_sz.
++ * It will return < 0 if the device is not PPP.
++ *
++ * You MUST release the channels using ppp_release_channels().
++ */
++int ppp_hold_channels(struct net_device *dev, struct ppp_channel *channels[],
++		      unsigned int chan_sz)
++{
++	struct ppp *ppp;
++	int c;
++	struct channel *pch;
++
++	if (!dev)
++		return -1;
++
++	if (dev->type != ARPHRD_PPP)
++		return -1;
++
++	ppp = netdev_priv(dev);
++
++	c = 0;
++	ppp_lock(ppp);
++	list_for_each_entry(pch, &ppp->channels, clist) {
++		struct ppp_channel *chan;
++
++		if (!pch->chan) {
++			/* Channel is going / gone away */
++			continue;
++		}
++
++		if (c == chan_sz) {
++			/* No space to record channel */
++			ppp_unlock(ppp);
++			return c;
++		}
++
++		/* Hold the channel, if supported */
++		chan = pch->chan;
++		if (!chan->ops->hold)
++			continue;
++
++		chan->ops->hold(chan);
++
++		 /* Record the channel */
++		channels[c++] = chan;
++	}
++	ppp_unlock(ppp);
++	return c;
++}
++EXPORT_SYMBOL(ppp_hold_channels);
++
++/* ppp_release_channels()
++ *	Releases channels
++ */
++void ppp_release_channels(struct ppp_channel *channels[], unsigned int chan_sz)
++{
++	unsigned int c;
++
++	for (c = 0; c < chan_sz; ++c) {
++		struct ppp_channel *chan;
++
++		chan = channels[c];
++		chan->ops->release(chan);
++	}
++}
++EXPORT_SYMBOL(ppp_release_channels);
++
+ /* Module/initialization stuff */
+ 
+ module_init(ppp_init);
+@@ -3603,6 +3859,8 @@ MODULE_LICENSE("GPL");
+ EXPORT_SYMBOL(ppp_output_wakeup);
+ EXPORT_SYMBOL(ppp_register_compressor);
+ EXPORT_SYMBOL(ppp_unregister_compressor);
++EXPORT_SYMBOL(ppp_update_stats);
++
+ MODULE_LICENSE("GPL");
+ MODULE_ALIAS_CHARDEV(PPP_MAJOR, 0);
+ MODULE_ALIAS_RTNL_LINK("ppp");
+--- a/drivers/net/ppp/pppoe.c 
++++ b/drivers/net/ppp/pppoe.c 
+@@ -62,6 +62,7 @@
+ #include <linux/inetdevice.h>
+ #include <linux/etherdevice.h>
+ #include <linux/skbuff.h>
++#include <linux/if_arp.h>
+ #include <linux/init.h>
+ #include <linux/if_ether.h>
+ #include <linux/if_pppox.h>
+@@ -87,7 +88,7 @@ static const struct ppp_channel_ops pppoe_chan_ops;
+ static int __pppoe_xmit(struct sock *sk, struct sk_buff *skb);
+ 
+ static const struct proto_ops pppoe_ops;
+-static const struct ppp_channel_ops pppoe_chan_ops;
++static const struct pppoe_channel_ops pppoe_chan_ops;
+ 
+ /* per-net private data for this module */
+ static unsigned int pppoe_net_id __read_mostly;
+@@ -645,6 +646,7 @@ static int pppoe_connect(struct socket *sock, struct s
+ 	if (stage_session(po->pppoe_pa.sid)) {
+ 		pppox_unbind_sock(sk);
+ 		pn = pppoe_pernet(sock_net(sk));
++
+ 		delete_item(pn, po->pppoe_pa.sid,
+ 			    po->pppoe_pa.remote, po->pppoe_ifindex);
+ 		if (po->pppoe_dev) {
+@@ -692,7 +694,7 @@ static int pppoe_connect(struct socket *sock, struct s
+ 
+ 		po->chan.mtu = dev->mtu - sizeof(struct pppoe_hdr) - 2;
+ 		po->chan.private = sk;
+-		po->chan.ops = &pppoe_chan_ops;
++		po->chan.ops = (struct ppp_channel_ops *)&pppoe_chan_ops;
+ 
+ 		error = ppp_register_net_channel(dev_net(dev), &po->chan);
+ 		if (error) {
+@@ -995,9 +997,80 @@ static const struct ppp_channel_ops pppoe_chan_ops = {
+ 	return 0;
+ }
+ 
+-static const struct ppp_channel_ops pppoe_chan_ops = {
+-	.start_xmit = pppoe_xmit,
+-	.fill_forward_path = pppoe_fill_forward_path,
++/************************************************************************
++ *
++ * function called by generic PPP driver to hold channel
++ *
++ ***********************************************************************/
++static void pppoe_hold_chan(struct ppp_channel *chan)
++{
++	struct sock *sk = (struct sock *)chan->private;
++
++	sock_hold(sk);
++}
++
++/************************************************************************
++ *
++ * function called by generic PPP driver to release channel
++ *
++ ***********************************************************************/
++static void pppoe_release_chan(struct ppp_channel *chan)
++{
++	struct sock *sk = (struct sock *)chan->private;
++
++	sock_put(sk);
++}
++
++/************************************************************************
++ *
++ * function called to get the channel protocol type
++ *
++ ***********************************************************************/
++static int pppoe_get_channel_protocol(struct ppp_channel *chan)
++{
++	return PX_PROTO_OE;
++}
++
++/************************************************************************
++ *
++ * function called to get the PPPoE channel addressing
++ * NOTE: This function returns a HOLD to the netdevice
++ *
++ ***********************************************************************/
++static int pppoe_get_addressing(struct ppp_channel *chan,
++				 struct pppoe_opt *addressing)
++{
++	struct sock *sk = (struct sock *)chan->private;
++	struct pppox_sock *po = pppox_sk(sk);
++	int err = 0;
++
++	*addressing = po->proto.pppoe;
++	if (!addressing->dev)
++		return -ENODEV;
++
++	dev_hold(addressing->dev);
++	return err;
++}
++
++/* pppoe_channel_addressing_get()
++ *	Return PPPoE channel specific addressing information.
++ */
++int pppoe_channel_addressing_get(struct ppp_channel *chan,
++				  struct pppoe_opt *addressing)
++{
++	return pppoe_get_addressing(chan, addressing);
++}
++EXPORT_SYMBOL(pppoe_channel_addressing_get);
++
++static const struct pppoe_channel_ops pppoe_chan_ops = {
++	/* PPPoE specific channel ops */
++	.get_addressing = pppoe_get_addressing,
++	/* General ppp channel ops */
++	.ops.start_xmit = pppoe_xmit,
++	.ops.fill_forward_path = pppoe_fill_forward_path,
++	.ops.get_channel_protocol = pppoe_get_channel_protocol,
++	.ops.hold = pppoe_hold_chan,
++	.ops.release = pppoe_release_chan,
+ };
+ 
+ static int pppoe_recvmsg(struct socket *sock, struct msghdr *m,
+--- a/drivers/net/ppp/pptp.c 
++++ b/drivers/net/ppp/pptp.c 
+@@ -50,6 +50,8 @@ static struct pppox_sock *lookup_chan(u16 call_id, __b
+ static const struct ppp_channel_ops pptp_chan_ops;
+ static const struct proto_ops pptp_ops;
+ 
++static pptp_gre_seq_offload_callback_t __rcu pptp_gre_offload_xmit_cb;
++
+ static struct pppox_sock *lookup_chan(u16 call_id, __be32 s_addr)
+ {
+ 	struct pppox_sock *sock;
+@@ -91,6 +93,53 @@ static int add_chan(struct pppox_sock *sock,
+ 	return i < MAX_CALLID;
+ }
+ 
++/* Search a pptp session based on peer call id and peer ip address */
++static int lookup_session_dst(struct pptp_opt *opt, u16 call_id, __be32 d_addr)
++{
++	struct pppox_sock *sock;
++	int i = 1;
++
++	rcu_read_lock();
++	for_each_set_bit_from(i, callid_bitmap, MAX_CALLID) {
++		sock = rcu_dereference(callid_sock[i]);
++		if (!sock)
++			continue;
++
++		if (sock->proto.pptp.dst_addr.call_id == call_id &&
++		    sock->proto.pptp.dst_addr.sin_addr.s_addr == d_addr) {
++			sock_hold(sk_pppox(sock));
++			memcpy(opt, &sock->proto.pptp, sizeof(struct pptp_opt));
++			sock_put(sk_pppox(sock));
++			rcu_read_unlock();
++			return 0;
++		}
++	}
++	rcu_read_unlock();
++	return -EINVAL;
++}
++
++/* If offload mode set then this function sends all packets to
++ * offload module instead of network stack
++ */
++static int pptp_client_skb_xmit(struct sk_buff *skb,
++				struct net_device *pptp_dev)
++{
++	pptp_gre_seq_offload_callback_t pptp_gre_offload_cb_f;
++	int ret;
++
++	rcu_read_lock();
++	pptp_gre_offload_cb_f = rcu_dereference(pptp_gre_offload_xmit_cb);
++
++	if (!pptp_gre_offload_cb_f) {
++		rcu_read_unlock();
++		return -1;
++	}
++
++	ret = pptp_gre_offload_cb_f(skb, pptp_dev);
++	rcu_read_unlock();
++	return ret;
++}
++
+ static int add_chan(struct pppox_sock *sock,
+ 		    struct pptp_addr *sa)
+ {
+@@ -163,8 +212,11 @@ static int pptp_xmit(struct ppp_channel *chan, struct 
+ 
+ 	struct rtable *rt;
+ 	struct net_device *tdev;
++	struct net_device *pptp_dev;
+ 	struct iphdr  *iph;
+ 	int    max_headroom;
++	int    pptp_ifindex;
++	int ret;
+ 
+ 	if (sk_pppox(po)->sk_state & PPPOX_DEAD)
+ 		goto tx_error;
+@@ -258,9 +310,33 @@ static int pptp_xmit(struct ppp_channel *chan, struct 
+ 	ip_select_ident(net, skb, NULL);
+ 	ip_send_check(iph);
+ 
+-	ip_local_out(net, skb->sk, skb);
+-	return 1;
++	pptp_ifindex = ppp_dev_index(chan);
++
++	/* set incoming interface as the ppp interface */
++	if (skb->skb_iif)
++		skb->skb_iif = pptp_ifindex;
++
++	/* If the PPTP GRE seq number offload module is not enabled yet
++	 * then sends all PPTP GRE packets through linux network stack
++	 */
++	if (!opt->pptp_offload_mode) {
++		ip_local_out(net, skb->sk, skb);
++		return 1;
++	}
++
++	pptp_dev = dev_get_by_index(&init_net, pptp_ifindex);
++	if (!pptp_dev)
++		goto tx_error;
++
++	 /* If PPTP offload module is enabled then forward all PPTP GRE
++	  * packets to PPTP GRE offload module
++	  */
++	ret = pptp_client_skb_xmit(skb, pptp_dev);
++	dev_put(pptp_dev);
++	if (ret < 0)
++		goto tx_error;
+ 
++	return 1;
+ tx_error:
+ 	kfree_skb(skb);
+ 	return 1;
+@@ -314,6 +390,13 @@ static int pptp_rcv_core(struct sock *sk, struct sk_bu
+ 		goto drop;
+ 
+ 	payload = skb->data + headersize;
++
++	 /* If offload is enabled, we expect the offload module
++	  * to handle PPTP GRE sequence number checks
++	  */
++	if (opt->pptp_offload_mode)
++		goto allow_packet;
++
+ 	/* check for expected sequence number */
+ 	if (seq < opt->seq_recv + 1 || WRAPPED(opt->seq_recv, seq)) {
+ 		if ((payload[0] == PPP_ALLSTATIONS) && (payload[1] == PPP_UI) &&
+@@ -371,6 +454,7 @@ static int pptp_rcv(struct sk_buff *skb)
+ 	if (po) {
+ 		skb_dst_drop(skb);
+ 		nf_reset_ct(skb);
++		skb->skb_iif = ppp_dev_index(&po->chan);
+ 		return sk_receive_skb(sk_pppox(po), skb, 0);
+ 	}
+ drop:
+@@ -473,7 +557,7 @@ static int pptp_connect(struct socket *sock, struct so
+ 
+ 	opt->dst_addr = sp->sa_addr.pptp;
+ 	sk->sk_state |= PPPOX_CONNECTED;
+-
++	opt->pptp_offload_mode = false;
+  end:
+ 	release_sock(sk);
+ 	return error;
+@@ -603,6 +687,125 @@ static const struct ppp_channel_ops pptp_chan_ops = {
+ 	return err;
+ }
+ 
++/* pptp_channel_addressing_get()
++ *	Return PPTP channel specific addressing information.
++ */
++void pptp_channel_addressing_get(struct pptp_opt *opt, struct ppp_channel *chan)
++{
++	struct sock *sk;
++	struct pppox_sock *po;
++
++	if (!opt)
++		return;
++
++	sk = (struct sock *)chan->private;
++	if (!sk)
++		return;
++
++	sock_hold(sk);
++
++	/* This is very unlikely, but check the socket is connected state */
++	if (unlikely(sock_flag(sk, SOCK_DEAD) ||
++		     !(sk->sk_state & PPPOX_CONNECTED))) {
++		sock_put(sk);
++		return;
++	}
++
++	po = pppox_sk(sk);
++	memcpy(opt, &po->proto.pptp, sizeof(struct pptp_opt));
++	sock_put(sk);
++}
++EXPORT_SYMBOL(pptp_channel_addressing_get);
++
++/* pptp_session_find()
++ *	Search and return a PPTP session info based on peer callid and IP
++ *	address. The function accepts the parameters in network byte order.
++ */
++int pptp_session_find(struct pptp_opt *opt, __be16 peer_call_id,
++		      __be32 peer_ip_addr)
++{
++	if (!opt)
++		return -EINVAL;
++
++	return lookup_session_dst(opt, ntohs(peer_call_id), peer_ip_addr);
++}
++EXPORT_SYMBOL(pptp_session_find);
++
++ /* Function to change the offload mode true/false for a PPTP session */
++static int pptp_set_offload_mode(bool accel_mode,
++				 __be16 peer_call_id, __be32 peer_ip_addr)
++{
++	struct pppox_sock *sock;
++	int i = 1;
++
++	rcu_read_lock();
++	for_each_set_bit_from(i, callid_bitmap, MAX_CALLID) {
++		sock = rcu_dereference(callid_sock[i]);
++		if (!sock)
++			continue;
++
++		if (sock->proto.pptp.dst_addr.call_id == peer_call_id &&
++		    sock->proto.pptp.dst_addr.sin_addr.s_addr == peer_ip_addr) {
++			sock_hold(sk_pppox(sock));
++			sock->proto.pptp.pptp_offload_mode = accel_mode;
++			sock_put(sk_pppox(sock));
++			rcu_read_unlock();
++			return 0;
++		}
++	}
++	rcu_read_unlock();
++	return -EINVAL;
++}
++
++/* Enable the PPTP session offload flag */
++int pptp_session_enable_offload_mode(__be16 peer_call_id, __be32 peer_ip_addr)
++{
++	return pptp_set_offload_mode(true, peer_call_id, peer_ip_addr);
++}
++EXPORT_SYMBOL(pptp_session_enable_offload_mode);
++
++/* Disable the PPTP session offload flag */
++int pptp_session_disable_offload_mode(__be16 peer_call_id, __be32 peer_ip_addr)
++{
++	return pptp_set_offload_mode(false, peer_call_id, peer_ip_addr);
++}
++EXPORT_SYMBOL(pptp_session_disable_offload_mode);
++
++/* Register the offload callback function on behalf of the module which
++ * will own the sequence and acknowledgment number updates for all
++ * PPTP GRE packets. All PPTP GRE packets are then transmitted to this
++ * module after encapsulation in order to ensure the correct seq/ack
++ * fields are set in the packets before transmission. This is required
++ * when PPTP flows are offloaded to acceleration engines, in-order to
++ * ensure consistency in sequence and ack numbers between PPTP control
++ * (PPP LCP) and data packets
++ */
++int pptp_register_gre_seq_offload_callback(pptp_gre_seq_offload_callback_t
++					   pptp_gre_offload_cb)
++{
++	pptp_gre_seq_offload_callback_t pptp_gre_offload_cb_f;
++
++	rcu_read_lock();
++	pptp_gre_offload_cb_f = rcu_dereference(pptp_gre_offload_xmit_cb);
++
++	if (pptp_gre_offload_cb_f) {
++		rcu_read_unlock();
++		return -1;
++	}
++
++	rcu_assign_pointer(pptp_gre_offload_xmit_cb, pptp_gre_offload_cb);
++	rcu_read_unlock();
++	return 0;
++}
++EXPORT_SYMBOL(pptp_register_gre_seq_offload_callback);
++
++/* Unregister the PPTP GRE packets sequence number offload callback */
++void pptp_unregister_gre_seq_offload_callback(void)
++{
++	rcu_assign_pointer(pptp_gre_offload_xmit_cb, NULL);
++}
++EXPORT_SYMBOL(pptp_unregister_gre_seq_offload_callback);
++
+ static const struct ppp_channel_ops pptp_chan_ops = {
+ 	.start_xmit = pptp_xmit,
+ 	.ioctl      = pptp_ppp_ioctl,
+--- a/drivers/net/vxlan/vxlan_core.c 
++++ b/drivers/net/vxlan/vxlan_core.c 
+@@ -90,6 +90,20 @@ static inline bool vxlan_collect_metadata(struct vxlan
+ /* salt for hash table */
+ static u32 vxlan_salt __read_mostly;
+ 
++ATOMIC_NOTIFIER_HEAD(vxlan_fdb_notifier_list);
++
++void vxlan_fdb_register_notify(struct notifier_block *nb)
++{
++	atomic_notifier_chain_register(&vxlan_fdb_notifier_list, nb);
++}
++EXPORT_SYMBOL(vxlan_fdb_register_notify);
++
++void vxlan_fdb_unregister_notify(struct notifier_block *nb)
++{
++	atomic_notifier_chain_unregister(&vxlan_fdb_notifier_list, nb);
++}
++EXPORT_SYMBOL(vxlan_fdb_unregister_notify);
++
+ static inline bool vxlan_collect_metadata(struct vxlan_sock *vs)
+ {
+ 	return vs->flags & VXLAN_F_COLLECT_METADATA ||
+@@ -367,6 +381,7 @@ static void __vxlan_fdb_notify(struct vxlan_dev *vxlan
+ {
+ 	struct net *net = dev_net(vxlan->dev);
+ 	struct sk_buff *skb;
++	struct vxlan_fdb_event vfe;
+ 	int err = -ENOBUFS;
+ 
+ 	skb = nlmsg_new(vxlan_nlmsg_size(), GFP_ATOMIC);
+@@ -382,6 +397,10 @@ static void __vxlan_fdb_notify(struct vxlan_dev *vxlan
+ 	}
+ 
+ 	rtnl_notify(skb, net, 0, RTNLGRP_NEIGH, NULL, GFP_ATOMIC);
++	vfe.dev = vxlan->dev;
++	vfe.rdst = rd;
++	ether_addr_copy(vfe.eth_addr, fdb->eth_addr);
++	atomic_notifier_call_chain(&vxlan_fdb_notifier_list, type, (void *)&vfe);
+ 	return;
+ errout:
+ 	if (err < 0)
+@@ -548,6 +567,18 @@ static struct vxlan_fdb *vxlan_find_mac(struct vxlan_d
+ 	return f;
+ }
+ 
++/* Find and update age of fdb entry corresponding to MAC. */
++void vxlan_fdb_update_mac(struct vxlan_dev *vxlan, const u8 *mac, uint32_t vni)
++{
++	u32 hash_index;
++
++	hash_index = fdb_head_index(vxlan, mac, vni);
++	spin_lock_bh(&vxlan->hash_lock[hash_index]);
++	vxlan_find_mac(vxlan, mac, vni);
++	spin_unlock_bh(&vxlan->hash_lock[hash_index]);
++}
++EXPORT_SYMBOL(vxlan_fdb_update_mac);
++
+ /* caller should hold vxlan->hash_lock */
+ static struct vxlan_rdst *vxlan_fdb_find_rdst(struct vxlan_fdb *f,
+ 					      union vxlan_addr *ip, __be16 port,
+@@ -2749,6 +2780,9 @@ static void vxlan_xmit_one(struct sk_buff *skb, struct
+ 			dst_release(ndst);
+ 			goto out_unlock;
+ 		}
++
++		/* Reset the skb_iif to Tunnels interface index */
++		skb->skb_iif = dev->ifindex;
+ 
+ 		tos = ip_tunnel_ecn_encap(tos, old_iph, skb);
+ 		ttl = ttl ? : ip4_dst_hoplimit(&rt->dst);
+@@ -2821,6 +2855,9 @@ static void vxlan_xmit_one(struct sk_buff *skb, struct
+ 		if (err < 0)
+ 			goto tx_error;
+ 
++		/* Reset the skb_iif to Tunnels interface index */
++		skb->skb_iif = dev->ifindex;
++
+ 		udp_tunnel6_xmit_skb(ndst, sock6->sock->sk, skb, dev,
+ 				     &local_ip.sin6.sin6_addr,
+ 				     &dst->sin6.sin6_addr, tos, ttl,
+--- a/include/linux/if_bridge.h 
++++ b/include/linux/if_bridge.h 
+@@ -68,6 +68,18 @@ int br_ioctl_call(struct net *net, struct net_bridge *
+ 			     void __user *uarg));
+ int br_ioctl_call(struct net *net, struct net_bridge *br, unsigned int cmd,
+ 		  struct ifreq *ifr, void __user *uarg);
++extern struct net_device *br_port_dev_get(struct net_device *dev,
++					  unsigned char *addr,
++					  struct sk_buff *skb,
++					  unsigned int cookie);
++extern void br_refresh_fdb_entry(struct net_device *dev, const char *addr);
++extern void br_dev_update_stats(struct net_device *dev,
++				struct rtnl_link_stats64 *nlstats);
++extern struct net_bridge_fdb_entry *br_fdb_has_entry(struct net_device *dev,
++						     const char *addr,
++						     __u16 vid);
++extern void br_fdb_update_register_notify(struct notifier_block *nb);
++extern void br_fdb_update_unregister_notify(struct notifier_block *nb);
+ 
+ #if IS_ENABLED(CONFIG_BRIDGE) && IS_ENABLED(CONFIG_BRIDGE_IGMP_SNOOPING)
+ int br_multicast_list_adjacent(struct net_device *dev,
+@@ -191,4 +203,26 @@ static inline clock_t br_get_ageing_time(const struct 
+ }
+ #endif
+ 
++typedef struct net_bridge_port *br_port_dev_get_hook_t(struct net_device *dev,
++						       struct sk_buff *skb,
++						       unsigned char *addr,
++						       unsigned int cookie);
++extern br_port_dev_get_hook_t __rcu *br_port_dev_get_hook;
++
++typedef void (br_notify_hook_t)(int group, int event, const void *ptr);
++extern br_notify_hook_t __rcu *br_notify_hook;
++#define BR_FDB_EVENT_ADD     0x01
++#define BR_FDB_EVENT_DEL     0x02
++
++struct br_fdb_event {
++	unsigned char addr[6];
++	unsigned char is_local;
++	struct net_device *dev;
++	struct net_bridge *br;
++	struct net_device *orig_dev;
++};
++
++extern void br_fdb_register_notify(struct notifier_block *nb);
++extern void br_fdb_unregister_notify(struct notifier_block *nb);
++extern struct net_device *br_fdb_bridge_dev_get_and_hold(struct net_bridge *br);
+ #endif
+--- a/include/linux/if_pppox.h 
++++ b/include/linux/if_pppox.h 
+@@ -38,6 +38,7 @@ struct pptp_opt {
+ 	u32 ack_sent, ack_recv;
+ 	u32 seq_sent, seq_recv;
+ 	int ppp_flags;
++	bool pptp_offload_mode;
+ };
+ #include <net/sock.h>
+ 
+@@ -93,4 +94,45 @@ enum {
+     PPPOX_DEAD		= 16  /* dead, useless, please clean me up!*/
+ };
+ 
++/*
++ * PPPoE Channel specific operations
++ */
++struct pppoe_channel_ops {
++	/* Must be first - general to all PPP channels */
++	struct ppp_channel_ops ops;
++	int (*get_addressing)(struct ppp_channel *, struct pppoe_opt *);
++};
++
++/* PPTP client callback */
++typedef int (*pptp_gre_seq_offload_callback_t)(struct sk_buff *skb,
++					       struct net_device *pptp_dev);
++
++/* Return PPPoE channel specific addressing information */
++extern int pppoe_channel_addressing_get(struct ppp_channel *chan,
++					 struct pppoe_opt *addressing);
++
++/* Lookup PPTP session info and return PPTP session */
++extern int pptp_session_find(struct pptp_opt *opt, __be16 peer_call_id,
++			     __be32 peer_ip_addr);
++
++/* Return PPTP session information given the channel */
++extern void pptp_channel_addressing_get(struct pptp_opt *opt,
++					struct ppp_channel *chan);
++
++/* Enable the PPTP session offload flag */
++extern int pptp_session_enable_offload_mode(__be16 peer_call_id,
++					    __be32 peer_ip_addr);
++
++/* Disable the PPTP session offload flag */
++extern int pptp_session_disable_offload_mode(__be16 peer_call_id,
++					     __be32 peer_ip_addr);
++
++/* Register the PPTP GRE packets sequence number offload callback */
++extern int
++pptp_register_gre_seq_offload_callback(pptp_gre_seq_offload_callback_t
++				       pptp_client_cb);
++
++/* Unregister the PPTP GRE packets sequence number offload callback */
++extern void pptp_unregister_gre_seq_offload_callback(void);
++
+ #endif /* !(__LINUX_IF_PPPOX_H) */
+--- a/include/linux/netdevice.h 
++++ b/include/linux/netdevice.h 
+@@ -1686,6 +1686,30 @@ enum netdev_extra_priv_flags {
+ 	IFF_NO_IP_ALIGN			= BIT_ULL(34),
+ };
+ 
++/**
++ * enum netdev_priv_flags_ext - &struct net_device priv_flags_ext
++ *
++ * These flags are used to check for device type and can be
++ * set and used by the drivers
++ *
++ * @IFF_EXT_TUN_TAP: device is a TUN/TAP device
++ * @IFF_EXT_PPP_L2TPV2: device is a L2TPV2 device
++ * @IFF_EXT_PPP_L2TPV3: device is a L2TPV3 device
++ * @IFF_EXT_PPP_PPTP: device is a PPTP device
++ * @IFF_EXT_GRE_V4_TAP: device is a GRE IPv4 TAP device
++ * @IFF_EXT_GRE_V6_TAP: device is a GRE IPv6 TAP device
++ * @IFF_EXT_IFB: device is an IFB device
++ */
++enum netdev_priv_flags_ext {
++	IFF_EXT_TUN_TAP			= 1<<0,
++	IFF_EXT_PPP_L2TPV2		= 1<<1,
++	IFF_EXT_PPP_L2TPV3		= 1<<2,
++	IFF_EXT_PPP_PPTP		= 1<<3,
++	IFF_EXT_GRE_V4_TAP		= 1<<4,
++	IFF_EXT_GRE_V6_TAP		= 1<<5,
++	IFF_EXT_IFB			= 1<<6,
++};
++
+ #define IFF_802_1Q_VLAN			IFF_802_1Q_VLAN
+ #define IFF_EBRIDGE			IFF_EBRIDGE
+ #define IFF_BONDING			IFF_BONDING
+@@ -1801,6 +1825,8 @@ enum netdev_ml_priv_type {
+  *	@xdp_features:	XDP capability supported by the device
+  *	@priv_flags:	Like 'flags' but invisible to userspace,
+  *			see if.h for the definitions
++ *	@priv_flags_ext:	Extension for 'priv_flags'
++ *
+  *	@gflags:	Global flags ( kept as legacy )
+  *	@padded:	How much padding added by alloc_netdev()
+  *	@operstate:	RFC2863 operstate
+@@ -2018,6 +2044,7 @@ struct net_device {
+ 	unsigned int		flags;
+ 	xdp_features_t		xdp_features;
+ 	unsigned long long	priv_flags;
++	unsigned int		priv_flags_ext;
+ 	const struct net_device_ops *netdev_ops;
+ 	const struct xdp_metadata_ops *xdp_metadata_ops;
+ 	int			ifindex;
+@@ -2856,6 +2883,8 @@ enum netdev_cmd {
+ 	NETDEV_OFFLOAD_XSTATS_REPORT_USED,
+ 	NETDEV_OFFLOAD_XSTATS_REPORT_DELTA,
+ 	NETDEV_XDP_FEAT_CHANGE,
++	NETDEV_BR_JOIN,
++	NETDEV_BR_LEAVE,
+ };
+ const char *netdev_cmd_to_name(enum netdev_cmd cmd);
+ 
+@@ -4733,6 +4762,15 @@ void dev_uc_init(struct net_device *dev);
+ void dev_uc_init(struct net_device *dev);
+ 
+ /**
++ *  ifb_update_offload_stats - Update the IFB interface stats
++ *  @dev: IFB device to update the stats
++ *  @offload_stats: per CPU stats structure
++ *
++ *  Allows update of IFB stats when flows are offloaded to an accelerator.
++ **/
++void ifb_update_offload_stats(struct net_device *dev, struct pcpu_sw_netstats *offload_stats);
++
++/**
+  *  __dev_uc_sync - Synchonize device's unicast list
+  *  @dev:  device to sync
+  *  @sync: function to call if address should be added
+@@ -5291,6 +5329,11 @@ static inline bool netif_is_failover_slave(const struc
+ 	return dev->priv_flags & IFF_FAILOVER_SLAVE;
+ }
+ 
++static inline bool netif_is_ifb_dev(const struct net_device *dev)
++{
++	return dev->priv_flags_ext & IFF_EXT_IFB;
++}
++
+ /* This device needs to keep skb dst for qdisc enqueue or ndo_start_xmit() */
+ static inline void netif_keep_dst(struct net_device *dev)
+ {
+--- a/include/linux/ppp_channel.h 
++++ b/include/linux/ppp_channel.h 
+@@ -19,7 +19,12 @@
+ #include <linux/skbuff.h>
+ #include <linux/poll.h>
+ #include <net/net_namespace.h>
++#include <linux/notifier.h>
+ 
++/* PPP channel connection event types */
++#define PPP_CHANNEL_DISCONNECT	0
++#define PPP_CHANNEL_CONNECT	1
++
+ struct net_device_path;
+ struct net_device_path_ctx;
+ struct ppp_channel;
+@@ -31,6 +36,14 @@ struct ppp_channel_ops {
+ 	int	(*fill_forward_path)(struct net_device_path_ctx *,
+ 				     struct net_device_path *,
+ 				     const struct ppp_channel *);
++	/* Get channel protocol type, one of PX_PROTO_XYZ or specific to
++	 * the channel subtype
++	 */
++	int (*get_channel_protocol)(struct ppp_channel *);
++	/* Hold the channel from being destroyed */
++	void (*hold)(struct ppp_channel *);
++	/* Release hold on the channel */
++	void (*release)(struct ppp_channel *);
+ };
+ 
+ struct ppp_channel {
+@@ -45,6 +58,40 @@ struct ppp_channel {
+ };
+ 
+ #ifdef __KERNEL__
++/* Call this to obtain the underlying protocol of the PPP channel,
++ * e.g. PX_PROTO_OE
++ */
++extern int ppp_channel_get_protocol(struct ppp_channel *);
++
++/* Call this to hold a channel */
++extern bool ppp_channel_hold(struct ppp_channel *);
++
++/* Call this to release a hold you have upon a channel */
++extern void ppp_channel_release(struct ppp_channel *);
++
++/* Release hold on PPP channels */
++extern void ppp_release_channels(struct ppp_channel *channels[],
++				 unsigned int chan_sz);
++
++/* Hold PPP channels for the PPP device */
++extern int ppp_hold_channels(struct net_device *dev,
++			     struct ppp_channel *channels[],
++			     unsigned int chan_sz);
++
++bool ppp_is_cp_enabled(struct net_device *dev);
++
++/* Test if the ppp device is a multi-link ppp device */
++extern int ppp_is_multilink(struct net_device *dev);
++
++/* Update statistics of the PPP net_device by incrementing related
++ * statistics field value with corresponding parameter
++ */
++extern void ppp_update_stats(struct net_device *dev, unsigned long rx_packets,
++			     unsigned long rx_bytes, unsigned long tx_packets,
++			     unsigned long tx_bytes, unsigned long rx_errors,
++			     unsigned long tx_errors, unsigned long rx_dropped,
++			     unsigned long tx_dropped);
++
+ /* Called by the channel when it can send some more data. */
+ extern void ppp_output_wakeup(struct ppp_channel *);
+ 
+@@ -74,6 +121,12 @@ extern char *ppp_dev_name(struct ppp_channel *);
+ /* Get the device name associated with a channel, or NULL if none */
+ extern char *ppp_dev_name(struct ppp_channel *);
+ 
++/* Register the PPP channel connect notifier */
++extern void ppp_channel_connection_register_notify(struct notifier_block *nb);
++
++/* Unregister the PPP channel connect notifier */
++extern void ppp_channel_connection_unregister_notify(struct notifier_block *nb);
++
+ /*
+  * SMP locking notes:
+  * The channel code must ensure that when it calls ppp_unregister_channel,
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -689,6 +689,7 @@ typedef unsigned char *sk_buff_data_t;
+  *	@offload_fwd_mark: Packet was L2-forwarded in hardware
+  *	@offload_l3_fwd_mark: Packet was L3-forwarded in hardware
+  *	@tc_skip_classify: do not classify packet. set by IFB device
++ *	@tc_skip_classify_offload: do not classify packet set by offload IFB device
+  *	@tc_at_ingress: used within tc_classify to distinguish in/egress
+  *	@redirected: packet was redirected by packet classifier
+  *	@from_ingress: packet was redirected from the ingress path
+@@ -905,6 +906,7 @@ struct sk_buff {
+ #ifdef CONFIG_NET_XGRESS
+ 	__u8			tc_at_ingress:1;	/* See TC_AT_INGRESS_MASK */
+ 	__u8			tc_skip_classify:1;
++	__u8			tc_skip_classify_offload:1;
+ #endif
+ 	__u8			remcsum_offload:1;
+ 	__u8			csum_complete_sw:1;
+--- a/include/net/bond_3ad.h 
++++ b/include/net/bond_3ad.h 
+@@ -303,8 +303,13 @@ void bond_3ad_update_ad_actor_settings(struct bonding 
+ 			 struct slave *slave);
+ int bond_3ad_set_carrier(struct bonding *bond);
+ void bond_3ad_update_lacp_rate(struct bonding *bond);
++struct net_device *bond_3ad_get_tx_dev(struct sk_buff *skb, uint8_t *src_mac,
++				       uint8_t *dst_mac, void *src,
++				       void *dst, uint16_t protocol,
++				       struct net_device *bond_dev,
++				       __be16 *layer4hdr);
++
+ void bond_3ad_update_ad_actor_settings(struct bonding *bond);
+ int bond_3ad_stats_fill(struct sk_buff *skb, struct bond_3ad_stats *stats);
+ size_t bond_3ad_stats_size(void);
+ #endif /* _NET_BOND_3AD_H */
+-
+--- a/include/net/bonding.h 
++++ b/include/net/bonding.h 
+@@ -91,6 +91,8 @@
+ #define BOND_XFRM_FEATURES (NETIF_F_HW_ESP | NETIF_F_HW_ESP_TX_CSUM | \
+ 			    NETIF_F_GSO_ESP)
+ 
++extern struct bond_cb __rcu *bond_cb;
++
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+ extern atomic_t netpoll_block_tx;
+ 
+@@ -257,6 +259,7 @@ struct bonding {
+ 	spinlock_t ipsec_lock;
+ #endif /* CONFIG_XFRM_OFFLOAD */
+ 	struct bpf_prog *xdp_prog;
++	u32 id;
+ };
+ 
+ #define bond_slave_get_rcu(dev) \
+@@ -661,6 +664,11 @@ void bond_work_init_all(struct bonding *bond);
+ 					      int level);
+ int bond_update_slave_arr(struct bonding *bond, struct slave *skipslave);
+ void bond_slave_arr_work_rearm(struct bonding *bond, unsigned long delay);
++uint32_t bond_xmit_hash_without_skb(uint8_t *src_mac, uint8_t *dst_mac,
++				    void *psrc, void *pdst, uint16_t protocol,
++				    struct net_device *bond_dev,
++				    __be16 *layer4hdr);
++
+ void bond_work_init_all(struct bonding *bond);
+ 
+ #ifdef CONFIG_PROC_FS
+@@ -746,4 +754,17 @@ static inline netdev_tx_t bond_tx_drop(struct net_devi
+ 	return NET_XMIT_DROP;
+ }
+ 
++struct bond_cb {
++	void (*bond_cb_link_up)(struct net_device *slave);
++	void (*bond_cb_link_down)(struct net_device *slave);
++	void (*bond_cb_enslave)(struct net_device *slave);
++	void (*bond_cb_release)(struct net_device *slave);
++	void (*bond_cb_delete_by_slave)(struct net_device *slave);
++	void (*bond_cb_delete_by_mac)(uint8_t *mac_addr);
++};
++
++extern int bond_register_cb(struct bond_cb *cb);
++extern void bond_unregister_cb(void);
++extern int bond_get_id(struct net_device *bond_dev);
++
+ #endif /* _NET_BONDING_H */
+--- a/include/net/ip_tunnels.h 
++++ b/include/net/ip_tunnels.h 
+@@ -567,4 +567,6 @@ static inline void ip_tunnel_info_opts_set(struct ip_t
+ 
+ #endif /* CONFIG_INET */
+ 
++void ipip6_update_offload_stats(struct net_device *dev, void *ptr);
++void ip6_update_offload_stats(struct net_device *dev, void *ptr);
+ #endif /* __NET_IP_TUNNELS_H */
+--- a/include/net/netfilter/nf_conntrack_extend.h 
++++ b/include/net/netfilter/nf_conntrack_extend.h 
+@@ -31,6 +31,9 @@ enum nf_ct_ext_id {
+ #if IS_ENABLED(CONFIG_NET_ACT_CT)
+ 	NF_CT_EXT_ACT_CT,
+ #endif
++#ifdef CONFIG_NF_CONNTRACK_DSCPREMARK_EXT
++	NF_CT_EXT_DSCPREMARK,
++#endif
+ 	NF_CT_EXT_NUM,
+ };
+ 
+--- a/include/net/sch_generic.h 
++++ b/include/net/sch_generic.h 
+@@ -87,6 +87,7 @@ struct Qdisc {
+ #define TCQ_F_INVISIBLE		0x80 /* invisible by default in dump */
+ #define TCQ_F_NOLOCK		0x100 /* qdisc does not require locking */
+ #define TCQ_F_OFFLOADED		0x200 /* qdisc is offloaded to HW */
++#define TCQ_F_NSS		0x1000 /* NSS qdisc flag. */
+ 	u32			limit;
+ 	const struct Qdisc_ops	*ops;
+ 	struct qdisc_size_table	__rcu *stab;
+@@ -738,6 +739,40 @@ static inline bool skb_skip_tc_classify(struct sk_buff *skb)
+ 	return false;
+ }
+ 
++/*
++ * Set skb classify bit field.
++ */
++static inline void skb_set_tc_classify_offload(struct sk_buff *skb)
++{
++#ifdef CONFIG_NET_CLS_ACT
++	skb->tc_skip_classify_offload = 1;
++#endif
++}
++
++/*
++ * Clear skb classify bit field.
++ */
++static inline void skb_clear_tc_classify_offload(struct sk_buff *skb)
++{
++#ifdef CONFIG_NET_CLS_ACT
++	skb->tc_skip_classify_offload = 0;
++#endif
++}
++
++/*
++ * Skip skb processing if sent from ifb dev.
++ */
++static inline bool skb_skip_tc_classify_offload(struct sk_buff *skb)
++{
++#ifdef CONFIG_NET_CLS_ACT
++	if (skb->tc_skip_classify_offload) {
++		skb_clear_tc_classify_offload(skb);
++		return true;
++	}
++#endif
++	return false;
++}
++
+ /* Reset all TX qdiscs greater than index of a device.  */
+ static inline void qdisc_reset_all_tx_gt(struct net_device *dev, unsigned int i)
+ {
+--- a/include/net/vxlan.h 
++++ b/include/net/vxlan.h 
+@@ -292,6 +292,19 @@ struct vxlan_dev {
+ 					 VXLAN_F_COLLECT_METADATA  |	\
+ 					 VXLAN_F_VNIFILTER         |    \
+ 					 VXLAN_F_LOCALBYPASS)
++
++/*
++ * Application data for fdb notifier event
++ */
++struct vxlan_fdb_event {
++	struct net_device *dev;
++	struct vxlan_rdst *rdst;
++	u8 eth_addr[ETH_ALEN];
++};
++
++extern void vxlan_fdb_register_notify(struct notifier_block *nb);
++extern void vxlan_fdb_unregister_notify(struct notifier_block *nb);
++extern void vxlan_fdb_update_mac(struct vxlan_dev *vxlan, const u8 *mac, uint32_t vni);
+ 
+ struct net_device *vxlan_dev_create(struct net *net, const char *name,
+ 				    u8 name_assign_type, struct vxlan_config *conf);
+@@ -381,6 +394,15 @@ static inline unsigned short vxlan_get_sk_family(struc
+ 	return vni_field;
+ }
+ 
++/*
++ * vxlan_get_vni()
++ *	Returns the vni corresponding to tunnel
++ */
++static inline u32 vxlan_get_vni(struct vxlan_dev *vxlan_tun)
++{
++	return be32_to_cpu(vxlan_tun->cfg.vni);
++}
++
+ static inline unsigned short vxlan_get_sk_family(struct vxlan_sock *vs)
+ {
+ 	return vs->sock->sk->sk_family;
+--- a/include/uapi/linux/pkt_cls.h 
++++ b/include/uapi/linux/pkt_cls.h 
+@@ -136,6 +136,7 @@ enum tca_id {
+ 	TCA_ID_MPLS,
+ 	TCA_ID_CT,
+ 	TCA_ID_GATE,
++	TCA_ID_MIRRED_NSS,
+ 	/* other actions go here */
+ 	__TCA_ID_MAX = 255
+ };
+--- a/include/uapi/linux/pkt_sched.h 
++++ b/include/uapi/linux/pkt_sched.h 
+@@ -119,6 +119,249 @@ enum {
+ 
+ #define TCA_STAB_MAX (__TCA_STAB_MAX - 1)
+ 
++enum {
++	TCA_NSS_ACCEL_MODE_NSS_FW,
++	TCA_NSS_ACCEL_MODE_PPE,
++	TCA_NSS_ACCEL_MODE_MAX
++};
++
++/* NSSFIFO section */
++
++enum {
++	TCA_NSSFIFO_UNSPEC,
++	TCA_NSSFIFO_PARMS,
++	__TCA_NSSFIFO_MAX
++};
++
++#define TCA_NSSFIFO_MAX	(__TCA_NSSFIFO_MAX - 1)
++
++struct tc_nssfifo_qopt {
++	__u32	limit;		/* Queue length: bytes for bfifo, packets for pfifo */
++	__u8	set_default;	/* Sets qdisc to be the default qdisc for enqueue */
++	__u8	accel_mode;	/* Dictates which data plane offloads the qdisc */
++};
++
++/* NSSWRED section */
++
++enum {
++	TCA_NSSWRED_UNSPEC,
++	TCA_NSSWRED_PARMS,
++	__TCA_NSSWRED_MAX
++};
++
++#define TCA_NSSWRED_MAX (__TCA_NSSWRED_MAX - 1)
++#define NSSWRED_CLASS_MAX 6
++struct tc_red_alg_parameter {
++	__u32	min;	/* qlen_avg < min: pkts are all enqueued */
++	__u32	max;	/* qlen_avg > max: pkts are all dropped */
++	__u32	probability;/* Drop probability at qlen_avg = max */
++	__u32	exp_weight_factor;/* exp_weight_factor for calculate qlen_avg */
++};
++
++struct tc_nsswred_traffic_class {
++	__u32 limit;			/* Queue length */
++	__u32 weight_mode_value;	/* Weight mode value */
++	struct tc_red_alg_parameter rap;/* Parameters for RED alg */
++};
++
++/*
++ * Weight modes for WRED
++ */
++enum tc_nsswred_weight_modes {
++	TC_NSSWRED_WEIGHT_MODE_DSCP = 0,/* Weight mode is DSCP */
++	TC_NSSWRED_WEIGHT_MODES,	/* Must be last */
++};
++
++struct tc_nsswred_qopt {
++	__u32	limit;			/* Queue length */
++	enum tc_nsswred_weight_modes weight_mode;
++					/* Weight mode */
++	__u32	traffic_classes;	/* How many traffic classes: DPs */
++	__u32	def_traffic_class;	/* Default traffic if no match: def_DP */
++	__u32	traffic_id;		/* The traffic id to be configured: DP */
++	__u32	weight_mode_value;	/* Weight mode value */
++	struct tc_red_alg_parameter rap;/* RED algorithm parameters */
++	struct tc_nsswred_traffic_class tntc[NSSWRED_CLASS_MAX];
++					/* Traffic settings for dumpping */
++	__u8	ecn;			/* Setting ECN bit or dropping */
++	__u8	set_default;		/* Sets qdisc to be the default for enqueue */
++	__u8	accel_mode;		/* Dictates which data plane offloads the qdisc */
++};
++
++/* NSSCODEL section */
++
++enum {
++	TCA_NSSCODEL_UNSPEC,
++	TCA_NSSCODEL_PARMS,
++	__TCA_NSSCODEL_MAX
++};
++
++#define TCA_NSSCODEL_MAX	(__TCA_NSSCODEL_MAX - 1)
++
++struct tc_nsscodel_qopt {
++	__u32	target;		/* Acceptable queueing delay */
++	__u32	limit;		/* Max number of packets that can be held in the queue */
++	__u32	interval;	/* Monitoring interval */
++	__u32	flows;		/* Number of flow buckets */
++	__u32	quantum;	/* Weight (in bytes) used for DRR of flow buckets */
++	__u8	ecn;		/* 0 - disable ECN, 1 - enable ECN */
++	__u8	set_default;	/* Sets qdisc to be the default qdisc for enqueue */
++	__u8	accel_mode;	/* Dictates which data plane offloads the qdisc */
++};
++
++struct tc_nsscodel_xstats {
++	__u32 peak_queue_delay;	/* Peak delay experienced by a dequeued packet */
++	__u32 peak_drop_delay;	/* Peak delay experienced by a dropped packet */
++};
++
++/* NSSFQ_CODEL section */
++
++struct tc_nssfq_codel_xstats {
++	__u32 new_flow_count;	/* Total number of new flows seen */
++	__u32 new_flows_len;	/* Current number of new flows */
++	__u32 old_flows_len;	/* Current number of old flows */
++	__u32 ecn_mark;		/* Number of packets marked with ECN */
++	__u32 drop_overlimit;	/* Number of packets dropped due to overlimit */
++	__u32 maxpacket;	/* The largest packet seen so far in the queue */
++};
++
++/* NSSTBL section */
++
++enum {
++	TCA_NSSTBL_UNSPEC,
++	TCA_NSSTBL_PARMS,
++	__TCA_NSSTBL_MAX
++};
++
++#define TCA_NSSTBL_MAX	(__TCA_NSSTBL_MAX - 1)
++
++struct tc_nsstbl_qopt {
++	__u32	burst;		/* Maximum burst size */
++	__u32	rate;		/* Limiting rate of TBF */
++	__u32	peakrate;	/* Maximum rate at which TBF is allowed to send */
++	__u32	mtu;		/* Max size of packet, or minumim burst size */
++	__u8	accel_mode;	/* Dictates which data plane offloads the qdisc */
++};
++
++/* NSSPRIO section */
++
++#define TCA_NSSPRIO_MAX_BANDS 256
++
++enum {
++	TCA_NSSPRIO_UNSPEC,
++	TCA_NSSPRIO_PARMS,
++	__TCA_NSSPRIO_MAX
++};
++
++#define TCA_NSSPRIO_MAX	(__TCA_NSSPRIO_MAX - 1)
++
++struct tc_nssprio_qopt {
++	__u32	bands;		/* Number of bands */
++	__u8	accel_mode;	/* Dictates which data plane offloads the qdisc */
++};
++
++/* NSSBF section */
++
++enum {
++	TCA_NSSBF_UNSPEC,
++	TCA_NSSBF_CLASS_PARMS,
++	TCA_NSSBF_QDISC_PARMS,
++	__TCA_NSSBF_MAX
++};
++
++#define TCA_NSSBF_MAX	(__TCA_NSSBF_MAX - 1)
++
++struct tc_nssbf_class_qopt {
++	__u32	burst;		/* Maximum burst size */
++	__u32	rate;		/* Allowed bandwidth for this class */
++	__u32	mtu;		/* MTU of the associated interface */
++	__u32	quantum;	/* Quantum allocation for DRR */
++};
++
++struct tc_nssbf_qopt {
++	__u16	defcls;		/* Default class value */
++	__u8	accel_mode;	/* Dictates which data plane offloads the qdisc */
++};
++
++/* NSSWRR section */
++
++enum {
++	TCA_NSSWRR_UNSPEC,
++	TCA_NSSWRR_CLASS_PARMS,
++	TCA_NSSWRR_QDISC_PARMS,
++	__TCA_NSSWRR_MAX
++};
++
++#define TCA_NSSWRR_MAX	(__TCA_NSSWRR_MAX - 1)
++
++struct tc_nsswrr_class_qopt {
++	__u32	quantum;	/* Weight associated to this class */
++};
++
++struct tc_nsswrr_qopt {
++	__u8	accel_mode;	/* Dictates which data plane offloads the qdisc */
++};
++
++/* NSSWFQ section */
++
++enum {
++	TCA_NSSWFQ_UNSPEC,
++	TCA_NSSWFQ_CLASS_PARMS,
++	TCA_NSSWFQ_QDISC_PARMS,
++	__TCA_NSSWFQ_MAX
++};
++
++#define TCA_NSSWFQ_MAX	(__TCA_NSSWFQ_MAX - 1)
++
++struct tc_nsswfq_class_qopt {
++	__u32	quantum;	/* Weight associated to this class */
++};
++
++struct tc_nsswfq_qopt {
++	__u8	accel_mode;	/* Dictates which data plane offloads the qdisc */
++};
++
++/* NSSHTB section */
++
++enum {
++	TCA_NSSHTB_UNSPEC,
++	TCA_NSSHTB_CLASS_PARMS,
++	TCA_NSSHTB_QDISC_PARMS,
++	__TCA_NSSHTB_MAX
++};
++
++#define TCA_NSSHTB_MAX	(__TCA_NSSHTB_MAX - 1)
++
++struct tc_nsshtb_class_qopt {
++	__u32	burst;		/* Allowed burst size */
++	__u32	rate;		/* Allowed bandwidth for this class */
++	__u32	cburst;		/* Maximum burst size */
++	__u32	crate;		/* Maximum bandwidth for this class */
++	__u32	quantum;	/* Quantum allocation for DRR */
++	__u32	priority;	/* Priority value associated with this class */
++	__u32	overhead;	/* Overhead in bytes per packet */
++};
++
++struct tc_nsshtb_qopt {
++	__u32	r2q;		/* Rate to quantum ratio */
++	__u8	accel_mode;	/* Dictates which data plane offloads the qdisc */
++};
++
++/* NSSBLACKHOLE section */
++
++enum {
++	TCA_NSSBLACKHOLE_UNSPEC,
++	TCA_NSSBLACKHOLE_PARMS,
++	__TCA_NSSBLACKHOLE_MAX
++};
++
++#define TCA_NSSBLACKHOLE_MAX	(__TCA_NSSBLACKHOLE_MAX - 1)
++
++struct tc_nssblackhole_qopt {
++	__u8	set_default;	/* Sets qdisc to be the default qdisc for enqueue */
++	__u8	accel_mode;	/* Dictates which data plane offloads the qdisc */
++};
++
+ /* FIFO section */
+ 
+ struct tc_fifo_qopt {
+--- /dev/null
++++ b/include/uapi/linux/tc_act/tc_nss_mirred.h
+@@ -0,0 +1,31 @@
++#ifndef __LINUX_TC_NSS_MIRRED_H
++#define __LINUX_TC_NSS_MIRRED_H
++
++#include <linux/pkt_cls.h>
++
++/*
++ * Types of parameters for nss mirred action.
++ */
++enum {
++	TC_NSS_MIRRED_UNSPEC,
++	TC_NSS_MIRRED_TM,
++	TC_NSS_MIRRED_PARMS,
++	__TC_NSS_MIRRED_MAX
++};
++#define TC_NSS_MIRRED_MAX (__TC_NSS_MIRRED_MAX - 1)
++
++/*
++ * tc_nss_mirred
++ *	tc command structure for nss mirred action.
++ */
++struct tc_nss_mirred {
++	tc_gen;			/* General tc structure. */
++	__u32 from_ifindex;	/* ifindex of the port from which traffic
++				 * will be redirected.
++				 */
++	__u32 to_ifindex;	/* ifindex of the port to which traffic
++				 * will be redirected.
++				 */
++};
++
++#endif	/* __LINUX_TC_NSS_MIRRED_H */
+--- a/net/bridge/br_fdb.c 
++++ b/net/bridge/br_fdb.c 
+@@ -33,6 +33,20 @@ static const struct rhashtable_params br
+ 
+ static struct kmem_cache *br_fdb_cache __read_mostly;
+ 
++ATOMIC_NOTIFIER_HEAD(br_fdb_notifier_list);
++
++void br_fdb_register_notify(struct notifier_block *nb)
++{
++	atomic_notifier_chain_register(&br_fdb_notifier_list, nb);
++}
++EXPORT_SYMBOL_GPL(br_fdb_register_notify);
++
++void br_fdb_unregister_notify(struct notifier_block *nb)
++{
++	atomic_notifier_chain_unregister(&br_fdb_notifier_list, nb);
++}
++EXPORT_SYMBOL_GPL(br_fdb_unregister_notify);
++
+ int __init br_fdb_init(void)
+ {
+ 	br_fdb_cache = kmem_cache_create("bridge_fdb_cache",
+@@ -195,6 +209,23 @@ static void fdb_notify(struct net_bridge
+ 	if (swdev_notify)
+ 		br_switchdev_fdb_notify(br, fdb, type);
+ 
++	if (fdb->dst) {
++		int event;
++		struct br_fdb_event fdb_event;
++
++		if (type == RTM_NEWNEIGH)
++			event = BR_FDB_EVENT_ADD;
++		else
++			event = BR_FDB_EVENT_DEL;
++
++		fdb_event.dev = fdb->dst->dev;
++		ether_addr_copy(fdb_event.addr, fdb->key.addr.addr);
++		fdb_event.is_local = test_bit(BR_FDB_LOCAL, &fdb->flags);
++		atomic_notifier_call_chain(&br_fdb_notifier_list,
++					   event,
++					   (void *)&fdb_event);
++	}
++
+ 	skb = nlmsg_new(fdb_nlmsg_size(), GFP_ATOMIC);
+ 	if (skb == NULL)
+ 		goto errout;
+@@ -226,6 +257,44 @@ static struct net_bridge_fdb_entry *fdb_
+ 	return rhashtable_lookup(tbl, &key, br_fdb_rht_params);
+ }
+ 
++/* Refresh FDB entries for bridge packets being forwarded by offload engines */
++void br_refresh_fdb_entry(struct net_device *dev, const char *addr)
++{
++	struct net_bridge_port *p = br_port_get_rcu(dev);
++
++	if (!p || p->state == BR_STATE_DISABLED)
++		return;
++
++	if (!is_valid_ether_addr(addr)) {
++		pr_info("bridge: Attempt to refresh with invalid ether address %pM\n",
++			addr);
++		return;
++	}
++
++	rcu_read_lock();
++	br_fdb_update(p->br, p, addr, 0, true);
++	rcu_read_unlock();
++}
++EXPORT_SYMBOL_GPL(br_refresh_fdb_entry);
++
++/* Look up the MAC address in the device's bridge fdb table */
++struct net_bridge_fdb_entry *br_fdb_has_entry(struct net_device *dev,
++					      const char *addr, __u16 vid)
++{
++	struct net_bridge_port *p = br_port_get_rcu(dev);
++	struct net_bridge_fdb_entry *fdb;
++
++	if (!p || p->state == BR_STATE_DISABLED)
++		return NULL;
++
++	rcu_read_lock();
++	fdb = fdb_find_rcu(&p->br->fdb_hash_tbl, addr, vid);
++	rcu_read_unlock();
++
++	return fdb;
++}
++EXPORT_SYMBOL_GPL(br_fdb_has_entry);
++
+ /* requires bridge hash_lock */
+ static struct net_bridge_fdb_entry *br_fdb_find(struct net_bridge *br,
+ 						const unsigned char *addr,
+@@ -519,6 +588,20 @@ out:
+ 	spin_unlock_bh(&br->hash_lock);
+ }
+ 
++ATOMIC_NOTIFIER_HEAD(br_fdb_update_notifier_list);
++
++void br_fdb_update_register_notify(struct notifier_block *nb)
++{
++	atomic_notifier_chain_register(&br_fdb_update_notifier_list, nb);
++}
++EXPORT_SYMBOL_GPL(br_fdb_update_register_notify);
++
++void br_fdb_update_unregister_notify(struct notifier_block *nb)
++{
++	atomic_notifier_chain_unregister(&br_fdb_update_notifier_list, nb);
++}
++EXPORT_SYMBOL_GPL(br_fdb_update_unregister_notify);
++
+ void br_fdb_cleanup(struct work_struct *work)
+ {
+ 	struct net_bridge *br = container_of(work, struct net_bridge,
+@@ -527,6 +610,7 @@ void br_fdb_cleanup(struct work_struct *
+ 	unsigned long delay = hold_time(br);
+ 	unsigned long work_delay = delay;
+ 	unsigned long now = jiffies;
++	struct br_fdb_event fdb_event;
+ 
+ 	/* this part is tricky, in order to avoid blocking learning and
+ 	 * consequently forwarding, we rely on rcu to delete objects with
+@@ -553,8 +637,13 @@ void br_fdb_cleanup(struct work_struct *
+ 			work_delay = min(work_delay, this_timer - now);
+ 		} else {
+ 			spin_lock_bh(&br->hash_lock);
+-			if (!hlist_unhashed(&f->fdb_node))
+-				fdb_delete(br, f, true);
++			if (!hlist_unhashed(&f->fdb_node)) {
++				memset(&fdb_event, 0, sizeof(fdb_event));
++				ether_addr_copy(fdb_event.addr, f->key.addr.addr);
++				fdb_delete(br, f, true);
++				atomic_notifier_call_chain(&br_fdb_update_notifier_list, 0,
++						       (void *)&fdb_event);
++			}
+ 			spin_unlock_bh(&br->hash_lock);
+ 		}
+ 	}
+@@ -850,10 +939,19 @@ static bool __fdb_mark_active(struct net
+ 		  test_and_clear_bit(BR_FDB_NOTIFY_INACTIVE, &fdb->flags));
+ }
+ 
++/* Get the bridge device */
++struct net_device *br_fdb_bridge_dev_get_and_hold(struct net_bridge *br)
++{
++	dev_hold(br->dev);
++	return br->dev;
++}
++EXPORT_SYMBOL_GPL(br_fdb_bridge_dev_get_and_hold);
++
+ void br_fdb_update(struct net_bridge *br, struct net_bridge_port *source,
+ 		   const unsigned char *addr, u16 vid, unsigned long flags)
+ {
+ 	struct net_bridge_fdb_entry *fdb;
++	struct br_fdb_event fdb_event;
+ 
+ 	/* some users want to always flood. */
+ 	if (hold_time(br) == 0)
+@@ -878,19 +976,29 @@ void br_fdb_update(struct net_bridge *br
+ 			/* fastpath: update of existing entry */
+ 			if (unlikely(source != READ_ONCE(fdb->dst) &&
+ 				     !test_bit(BR_FDB_STICKY, &fdb->flags))) {
++				ether_addr_copy(fdb_event.addr, addr);
++				fdb_event.br = br;
++				fdb_event.orig_dev = fdb->dst->dev;
++				fdb_event.dev = source->dev;
+ 				br_switchdev_fdb_notify(br, fdb, RTM_DELNEIGH);
+ 				WRITE_ONCE(fdb->dst, source);
+ 				fdb_modified = true;
++
+ 				/* Take over HW learned entry */
+ 				if (unlikely(test_bit(BR_FDB_ADDED_BY_EXT_LEARN,
+ 						      &fdb->flags)))
+ 					clear_bit(BR_FDB_ADDED_BY_EXT_LEARN,
+ 						  &fdb->flags);
++
+ 				/* Clear locked flag when roaming to an
+ 				 * unlocked port.
+ 				 */
+ 				if (unlikely(test_bit(BR_FDB_LOCKED, &fdb->flags)))
+ 					clear_bit(BR_FDB_LOCKED, &fdb->flags);
++
++				atomic_notifier_call_chain(
++					&br_fdb_update_notifier_list,
++					0, (void *)&fdb_event);
+ 			}
+ 
+ 			if (unlikely(test_bit(BR_FDB_ADDED_BY_USER, &flags)))
+--- a/net/bridge/br_if.c 
++++ b/net/bridge/br_if.c 
+@@ -1,5 +1,11 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ /*
++ **************************************************************************
++ * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
++ **************************************************************************
++ */
++
++/*
+  *	Userspace interface
+  *	Linux ethernet bridge
+  *
+@@ -26,6 +32,10 @@
+ 
+ #include "br_private.h"
+ 
++/* Hook for external forwarding logic */
++br_port_dev_get_hook_t __rcu *br_port_dev_get_hook __read_mostly;
++EXPORT_SYMBOL_GPL(br_port_dev_get_hook);
++
+ /*
+  * Determine initial path cost based on speed.
+  * using recommendations from 802.1d standard
+@@ -706,6 +716,7 @@ int br_add_if(struct net_bridge *br, struct net_device
+ 	br_set_gso_limits(br);
+ 
+ 	kobject_uevent(&p->kobj, KOBJ_ADD);
++	call_netdevice_notifiers(NETDEV_BR_JOIN, dev);
+ 
+ 	return 0;
+ 
+@@ -742,6 +753,8 @@ int br_del_if(struct net_bridge *br, struct net_device
+ 	if (!p || p->br != br)
+ 		return -EINVAL;
+ 
++	call_netdevice_notifiers(NETDEV_BR_LEAVE, dev);
++
+ 	/* Since more than one interface can be attached to a bridge,
+ 	 * there still maybe an alternate path for netconsole to use;
+ 	 * therefore there is no reason for a NETDEV_RELEASE event.
+@@ -785,3 +798,83 @@ EXPORT_SYMBOL_GPL(br_port_flag_is_set);
+ 	return p->flags & flag;
+ }
+ EXPORT_SYMBOL_GPL(br_port_flag_is_set);
++
++/* br_port_dev_get()
++ *      If a skb is provided, and the br_port_dev_get_hook_t hook exists,
++ *      use that to try and determine the egress port for that skb.
++ *      If not, or no egress port could be determined, use the given addr
++ *      to identify the port to which it is reachable,
++ *	returing a reference to the net device associated with that port.
++ *
++ * NOTE: Return NULL if given dev is not a bridge or the mac has no
++ * associated port.
++ */
++struct net_device *br_port_dev_get(struct net_device *dev, unsigned char *addr,
++				   struct sk_buff *skb,
++				   unsigned int cookie)
++{
++	struct net_bridge_fdb_entry *fdbe;
++	struct net_bridge *br;
++	struct net_device *netdev = NULL;
++
++	/* Is this a bridge? */
++	if (!(dev->priv_flags & IFF_EBRIDGE))
++		return NULL;
++
++	rcu_read_lock();
++
++	/* If the hook exists and the skb isn't NULL, try and get the port */
++	if (skb) {
++		br_port_dev_get_hook_t *port_dev_get_hook;
++
++		port_dev_get_hook = rcu_dereference(br_port_dev_get_hook);
++		if (port_dev_get_hook) {
++			struct net_bridge_port *pdst =
++				__br_get(port_dev_get_hook, NULL, dev, skb,
++					 addr, cookie);
++			if (pdst) {
++				dev_hold(pdst->dev);
++				netdev = pdst->dev;
++				goto out;
++			}
++		}
++	}
++
++	/* Either there is no hook, or can't
++	 * determine the port to use - fall back to using FDB
++	 */
++
++	br = netdev_priv(dev);
++
++	/* Lookup the fdb entry and get reference to the port dev */
++	fdbe = br_fdb_find_rcu(br, addr, 0);
++	if (fdbe && fdbe->dst) {
++		netdev = fdbe->dst->dev; /* port device */
++		dev_hold(netdev);
++	}
++out:
++	rcu_read_unlock();
++	return netdev;
++}
++EXPORT_SYMBOL_GPL(br_port_dev_get);
++
++/* Update bridge statistics for bridge packets processed by offload engines */
++void br_dev_update_stats(struct net_device *dev,
++			 struct rtnl_link_stats64 *nlstats)
++{
++	struct pcpu_sw_netstats *tstats;
++
++	/* Is this a bridge? */
++	if (!(dev->priv_flags & IFF_EBRIDGE))
++		return;
++
++	tstats = this_cpu_ptr(dev->tstats);
++
++	u64_stats_update_begin(&tstats->syncp);
++	u64_stats_add(&tstats->rx_packets, nlstats->rx_packets);
++	u64_stats_add(&tstats->rx_bytes, nlstats->rx_bytes);
++	u64_stats_add(&tstats->tx_packets, nlstats->tx_packets);
++	u64_stats_add(&tstats->tx_bytes, nlstats->tx_bytes);
++	u64_stats_update_end(&tstats->syncp);
++}
++EXPORT_SYMBOL_GPL(br_dev_update_stats);
+--- a/net/core/dev.c 
++++ b/net/core/dev.c 
+@@ -1690,7 +1690,7 @@ const char *netdev_cmd_to_name(enum netdev_cmd cmd)
+ 	N(SVLAN_FILTER_PUSH_INFO) N(SVLAN_FILTER_DROP_INFO)
+ 	N(PRE_CHANGEADDR) N(OFFLOAD_XSTATS_ENABLE) N(OFFLOAD_XSTATS_DISABLE)
+ 	N(OFFLOAD_XSTATS_REPORT_USED) N(OFFLOAD_XSTATS_REPORT_DELTA)
+-	N(XDP_FEAT_CHANGE)
++	N(XDP_FEAT_CHANGE) N(BR_JOIN) N(BR_LEAVE)
+ 	}
+ #undef N
+ 	return "UNKNOWN_NETDEV_EVENT";
+--- a/net/ipv4/ip_gre.c 
++++ b/net/ipv4/ip_gre.c 
+@@ -665,6 +665,8 @@ static netdev_tx_t ipgre_xmit(struct sk_buff *skb,
+ 
+ 	if (gre_handle_offloads(skb, !!(tunnel->parms.o_flags & TUNNEL_CSUM)))
+ 		goto free_skb;
++
++	skb->skb_iif = dev->ifindex;
+ 
+ 	__gre_xmit(skb, dev, tnl_params, skb->protocol);
+ 	return NETDEV_TX_OK;
+@@ -747,6 +749,8 @@ static netdev_tx_t gre_tap_xmit(struct sk_buff *skb,
+ 
+ 	if (skb_cow_head(skb, dev->needed_headroom))
+ 		goto free_skb;
++
++	skb->skb_iif = dev->ifindex;
+ 
+ 	__gre_xmit(skb, dev, &tunnel->parms.iph, htons(ETH_P_TEB));
+ 	return NETDEV_TX_OK;
+@@ -828,7 +832,6 @@ static int ipgre_tunnel_ctl(struct net_device *dev, st
+ /* Nice toy. Unfortunately, useless in real life :-)
+    It allows to construct virtual multiprotocol broadcast "LAN"
+    over the Internet, provided multicast routing is tuned.
+-
+ 
+    I have no idea was this bicycle invented before me,
+    so that I had to set ARPHRD_IPGRE to a random value.
+@@ -1341,6 +1344,7 @@ static void ipgre_tap_setup(struct net_device *dev)
+ 	dev->netdev_ops	= &gre_tap_netdev_ops;
+ 	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
+ 	dev->priv_flags	|= IFF_LIVE_ADDR_CHANGE;
++	dev->priv_flags_ext	|= IFF_EXT_GRE_V4_TAP;
+ 	ip_tunnel_setup(dev, gre_tap_net_id);
+ }
+ 
+--- a/net/ipv4/ip_tunnel_core.c 
++++ b/net/ipv4/ip_tunnel_core.c 
+@@ -55,8 +55,13 @@ void iptunnel_xmit(struct sock *sk, struct rtable *rt,
+ 	struct net *net = dev_net(rt->dst.dev);
+ 	struct net_device *dev = skb->dev;
+ 	struct iphdr *iph;
++	struct net_device *in_dev = NULL;
+ 	int err;
++	int skb_iif;
+ 
++	/* Save input interface index */
++	skb_iif = skb->skb_iif;
++
+ 	skb_scrub_packet(skb, xnet);
+ 
+ 	skb_clear_hash_if_not_l4(skb);
+@@ -78,6 +83,15 @@ void iptunnel_xmit(struct sock *sk, struct rtable *rt,
+ 	iph->saddr	=	src;
+ 	iph->ttl	=	ttl;
+ 	__ip_select_ident(net, iph, skb_shinfo(skb)->gso_segs ?: 1);
++
++	/* Get input interface */
++	if (skb_iif) {
++		in_dev = __dev_get_by_index(&init_net, skb_iif);
++	}
++
++	if (proto == IPPROTO_IPV6 || proto == IPPROTO_GRE || netif_is_vxlan(in_dev)) {
++		skb->skb_iif = skb_iif;
++	}
+ 
+ 	err = ip_local_out(net, sk, skb);
+ 
+--- a/net/ipv6/ip6_gre.c 
++++ b/net/ipv6/ip6_gre.c 
+@@ -1940,6 +1940,7 @@ static void ip6gre_tap_setup(struct net_device *dev)
+ 
+ 	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
+ 	dev->priv_flags |= IFF_LIVE_ADDR_CHANGE;
++	dev->priv_flags_ext |= IFF_EXT_GRE_V6_TAP;
+ 	netif_keep_dst(dev);
+ }
+ 
+--- a/net/ipv6/ip6_tunnel.c 
++++ b/net/ipv6/ip6_tunnel.c 
+@@ -100,6 +100,24 @@ static inline int ip6_tnl_mpls_supported(void)
+ #define for_each_ip6_tunnel_rcu(start) \
+ 	for (t = rcu_dereference(start); t; t = rcu_dereference(t->next))
+ 
++/*
++ * Update offload stats
++ */
++void ip6_update_offload_stats(struct net_device *dev, void *ptr)
++{
++	struct pcpu_sw_netstats *tstats = per_cpu_ptr(dev->tstats, 0);
++	const struct pcpu_sw_netstats *offload_stats =
++					(struct pcpu_sw_netstats *)ptr;
++
++	u64_stats_update_begin(&tstats->syncp);
++	u64_stats_add(&tstats->tx_packets, u64_stats_read(&offload_stats->tx_packets));
++	u64_stats_add(&tstats->tx_bytes, u64_stats_read(&offload_stats->tx_bytes));
++	u64_stats_add(&tstats->rx_packets, u64_stats_read(&offload_stats->rx_packets));
++	u64_stats_add(&tstats->rx_bytes, u64_stats_read(&offload_stats->rx_bytes));
++	u64_stats_update_end(&tstats->syncp);
++}
++EXPORT_SYMBOL(ip6_update_offload_stats);
++
+ /**
+  * ip6_tnl_lookup - fetch tunnel matching the end-point addresses
+  *   @net: network namespace
+@@ -1025,6 +1043,9 @@ static int __ip6_tnl_rcv(struct ip6_tnl *tunnel, struc
+ 
+ 	if (tun_dst)
+ 		skb_dst_set(skb, (struct dst_entry *)tun_dst);
++
++	/* Reset the skb_iif to Tunnels interface index */
++	skb->skb_iif = tunnel->dev->ifindex;
+ 
+ 	gro_cells_receive(&tunnel->gro_cells, skb);
+ 	return 0;
+@@ -1107,7 +1128,6 @@ static int ipxip6_rcv(struct sk_buff *skb, u8 ipproto,
+ 	rcu_read_unlock();
+ 
+ 	return ret;
+-
+ drop:
+ 	rcu_read_unlock();
+ 	kfree_skb(skb);
+@@ -1416,6 +1436,9 @@ route_lookup:
+ 	ipv6h->nexthdr = proto;
+ 	ipv6h->saddr = fl6->saddr;
+ 	ipv6h->daddr = fl6->daddr;
++
++	/* Reset the skb_iif to Tunnels interface index */
++	skb->skb_iif = dev->ifindex;
+ 	ip6tunnel_xmit(NULL, skb, dev);
+ 	return 0;
+ tx_err_link_failure:
+--- a/net/ipv6/ndisc.c 
++++ b/net/ipv6/ndisc.c 
+@@ -650,6 +650,7 @@ void ndisc_send_ns(struct net_device *dev, const struc
+ 	if (skb)
+ 		ndisc_send_skb(skb, daddr, saddr);
+ }
++EXPORT_SYMBOL(ndisc_send_ns);
+ 
+ void ndisc_send_rs(struct net_device *dev, const struct in6_addr *saddr,
+ 		   const struct in6_addr *daddr)
+--- a/net/ipv6/sit.c 
++++ b/net/ipv6/sit.c 
+@@ -90,6 +90,21 @@ static inline struct sit_net *dev_to_sit_net(struct ne
+ 	return net_generic(t->net, sit_net_id);
+ }
+ 
++void ipip6_update_offload_stats(struct net_device *dev, void *ptr)
++{
++	struct pcpu_sw_netstats *tstats = per_cpu_ptr(dev->tstats, 0);
++	const struct pcpu_sw_netstats *offload_stats =
++					(struct pcpu_sw_netstats *)ptr;
++
++	u64_stats_update_begin(&tstats->syncp);
++	u64_stats_add(&tstats->tx_packets, u64_stats_read(&offload_stats->tx_packets));
++	u64_stats_add(&tstats->tx_bytes, u64_stats_read(&offload_stats->tx_bytes));
++	u64_stats_add(&tstats->rx_packets, u64_stats_read(&offload_stats->rx_packets));
++	u64_stats_add(&tstats->rx_bytes, u64_stats_read(&offload_stats->rx_bytes));
++	u64_stats_update_end(&tstats->syncp);
++}
++EXPORT_SYMBOL(ipip6_update_offload_stats);
++
+ /*
+  * Must be invoked with rcu_read_lock
+  */
+@@ -728,6 +743,8 @@ static int ipip6_rcv(struct sk_buff *skb)
+ 
+ 		dev_sw_netstats_rx_add(tunnel->dev, skb->len);
+ 
++		/* Reset the skb_iif to Tunnels interface index */
++		skb->skb_iif = tunnel->dev->ifindex;
+ 		netif_rx(skb);
+ 
+ 		return 0;
+@@ -1037,6 +1054,8 @@ static netdev_tx_t ipip6_tunnel_xmit(struct sk_buff *s
+ 
+ 	skb_set_inner_ipproto(skb, IPPROTO_IPV6);
+ 
++	/* Reset the skb_iif to Tunnels interface index */
++	skb->skb_iif = tunnel->dev->ifindex;
+ 	iptunnel_xmit(NULL, rt, skb, fl4.saddr, fl4.daddr, protocol, tos, ttl,
+ 		      df, !net_eq(tunnel->net, dev_net(dev)));
+ 	return NETDEV_TX_OK;
+--- a/net/l2tp/l2tp_core.c 
++++ b/net/l2tp/l2tp_core.c 
+@@ -397,7 +397,31 @@ EXPORT_SYMBOL_GPL(l2tp_session_register);
+ 	return err;
+ }
+ EXPORT_SYMBOL_GPL(l2tp_session_register);
++
++void l2tp_stats_update(struct l2tp_tunnel *tunnel,
++		       struct l2tp_session *session,
++		       struct l2tp_stats *stats)
++{
++	atomic_long_add(atomic_long_read(&stats->rx_packets),
++			&tunnel->stats.rx_packets);
++	atomic_long_add(atomic_long_read(&stats->rx_bytes),
++			&tunnel->stats.rx_bytes);
++	atomic_long_add(atomic_long_read(&stats->tx_packets),
++			&tunnel->stats.tx_packets);
++	atomic_long_add(atomic_long_read(&stats->tx_bytes),
++			&tunnel->stats.tx_bytes);
+ 
++	atomic_long_add(atomic_long_read(&stats->rx_packets),
++			&session->stats.rx_packets);
++	atomic_long_add(atomic_long_read(&stats->rx_bytes),
++			&session->stats.rx_bytes);
++	atomic_long_add(atomic_long_read(&stats->tx_packets),
++			&session->stats.tx_packets);
++	atomic_long_add(atomic_long_read(&stats->tx_bytes),
++			&session->stats.tx_bytes);
++}
++EXPORT_SYMBOL_GPL(l2tp_stats_update);
++
+ /*****************************************************************************
+  * Receive data handling
+  *****************************************************************************/
+--- a/net/l2tp/l2tp_core.h 
++++ b/net/l2tp/l2tp_core.h 
+@@ -231,6 +231,8 @@ struct l2tp_session *l2tp_session_get_by_ifname(const 
+ struct l2tp_session *l2tp_session_get_nth(struct l2tp_tunnel *tunnel, int nth);
+ struct l2tp_session *l2tp_session_get_by_ifname(const struct net *net,
+ 						const char *ifname);
++void l2tp_stats_update(struct l2tp_tunnel *tunnel, struct l2tp_session *session,
++		       struct l2tp_stats *stats);
+ 
+ /* Tunnel and session lifetime management.
+  * Creation of a new instance is a two-step process: create, then register.
+--- a/net/netfilter/Kconfig 
++++ b/net/netfilter/Kconfig 
+@@ -160,6 +160,13 @@ config NF_CONNTRACK_TIMESTAMP
+ 
+ 	  If unsure, say `N'.
+ 
++config NF_CONNTRACK_DSCPREMARK_EXT
++	bool  'Connection tracking extension for dscp remark target'
++	depends on NETFILTER_ADVANCED
++	help
++	  This option enables support for connection tracking extension
++	  for dscp remark.
++
+ config NF_CONNTRACK_TIMESTAMP
+ 	bool  'Connection tracking timestamping'
+ 	depends on NETFILTER_ADVANCED
+--- a/net/netfilter/nf_conntrack_extend.c
++++ b/net/netfilter/nf_conntrack_extend.c
+@@ -23,6 +23,7 @@
+ #include <net/netfilter/nf_conntrack_labels.h>
+ #include <net/netfilter/nf_conntrack_synproxy.h>
+ #include <net/netfilter/nf_conntrack_act_ct.h>
++#include <net/netfilter/nf_conntrack_dscpremark_ext.h>
+ #include <net/netfilter/nf_nat.h>
+ 
+ #define NF_CT_EXT_PREALLOC	128u /* conntrack events are on by default */
+@@ -54,6 +55,9 @@ static const u8 nf_ct_ext_type_len[NF_CT
+ #if IS_ENABLED(CONFIG_NET_ACT_CT)
+ 	[NF_CT_EXT_ACT_CT] = sizeof(struct nf_conn_act_ct_ext),
+ #endif
++#ifdef CONFIG_NF_CONNTRACK_DSCPREMARK_EXT
++	[NF_CT_EXT_DSCPREMARK] = sizeof(struct nf_ct_dscpremark_ext),
++#endif
+ };
+ 
+ static __always_inline unsigned int total_extension_size(void)
+@@ -86,6 +90,9 @@ static __always_inline unsigned int tota
+ #if IS_ENABLED(CONFIG_NET_ACT_CT)
+ 		+ sizeof(struct nf_conn_act_ct_ext)
+ #endif
++#ifdef CONFIG_NF_CONNTRACK_DSCPREMARK_EXT
++	    + sizeof(struct nf_ct_dscpremark_ext)
++#endif
+ 	;
+ }
+ 
+--- a/net/netfilter/Makefile 
++++ b/net/netfilter/Makefile 
+@@ -14,6 +14,7 @@ nf_conntrack-$(CONFIG_NF_CT_PROTO_GRE) += nf_conntrack
+ nf_conntrack-$(CONFIG_NF_CT_PROTO_DCCP) += nf_conntrack_proto_dccp.o
+ nf_conntrack-$(CONFIG_NF_CT_PROTO_SCTP) += nf_conntrack_proto_sctp.o
+ nf_conntrack-$(CONFIG_NF_CT_PROTO_GRE) += nf_conntrack_proto_gre.o
++nf_conntrack-$(CONFIG_NF_CONNTRACK_DSCPREMARK_EXT) += nf_conntrack_dscpremark_ext.o
+ ifeq ($(CONFIG_NF_CONNTRACK),m)
+ nf_conntrack-$(CONFIG_DEBUG_INFO_BTF_MODULES) += nf_conntrack_bpf.o
+ else ifeq ($(CONFIG_NF_CONNTRACK),y)
+--- a/net/netfilter/nf_conntrack_core.c 
++++ b/net/netfilter/nf_conntrack_core.c 
+@@ -45,6 +45,9 @@
+ #include <net/netfilter/nf_conntrack_zones.h>
+ #include <net/netfilter/nf_conntrack_timestamp.h>
+ #include <net/netfilter/nf_conntrack_timeout.h>
++#ifdef CONFIG_NF_CONNTRACK_DSCPREMARK_EXT
++#include <net/netfilter/nf_conntrack_dscpremark_ext.h>
++#endif
+ #include <net/netfilter/nf_conntrack_labels.h>
+ #include <net/netfilter/nf_conntrack_synproxy.h>
+ #include <net/netfilter/nf_nat.h>
+@@ -1740,6 +1743,9 @@ init_conntrack(struct net *net, struct n
+ 	nf_ct_acct_ext_add(ct, GFP_ATOMIC);
+ 	nf_ct_tstamp_ext_add(ct, GFP_ATOMIC);
+ 	nf_ct_labels_ext_add(ct);
++#ifdef CONFIG_NF_CONNTRACK_DSCPREMARK_EXT
++	nf_ct_dscpremark_ext_add(ct, GFP_ATOMIC);
++#endif
+ 
+ #ifdef CONFIG_NF_CONNTRACK_EVENTS
+ 	ecache = tmpl ? nf_ct_ecache_find(tmpl) : NULL;
+--- a/net/netfilter/xt_DSCP.c 
++++ b/net/netfilter/xt_DSCP.c 
+@@ -15,6 +15,9 @@
+ 
+ #include <linux/netfilter/x_tables.h>
+ #include <linux/netfilter/xt_DSCP.h>
++#ifdef CONFIG_NF_CONNTRACK_DSCPREMARK_EXT
++#include <net/netfilter/nf_conntrack_dscpremark_ext.h>
++#endif
+ 
+ MODULE_AUTHOR("Harald Welte <laforge@netfilter.org>");
+ MODULE_DESCRIPTION("Xtables: DSCP/TOS field modification");
+@@ -31,6 +34,10 @@ dscp_tg(struct sk_buff *skb, const struc
+ {
+ 	const struct xt_DSCP_info *dinfo = par->targinfo;
+ 	u_int8_t dscp = ipv4_get_dsfield(ip_hdr(skb)) >> XT_DSCP_SHIFT;
++#ifdef CONFIG_NF_CONNTRACK_DSCPREMARK_EXT
++	struct nf_conn *ct;
++	enum ip_conntrack_info ctinfo;
++#endif
+ 
+ 	if (dscp != dinfo->dscp) {
+ 		if (skb_ensure_writable(skb, sizeof(struct iphdr)))
+@@ -39,6 +46,13 @@ dscp_tg(struct sk_buff *skb, const struc
+ 		ipv4_change_dsfield(ip_hdr(skb), XT_DSCP_ECN_MASK,
+ 				    dinfo->dscp << XT_DSCP_SHIFT);
+ 
++#ifdef CONFIG_NF_CONNTRACK_DSCPREMARK_EXT
++		ct = nf_ct_get(skb, &ctinfo);
++		if (!ct)
++			return XT_CONTINUE;
++
++		nf_conntrack_dscpremark_ext_set_dscp_rule_valid(ct);
++#endif
+ 	}
+ 	return XT_CONTINUE;
+ }
+@@ -48,13 +62,24 @@ dscp_tg6(struct sk_buff *skb, const stru
+ {
+ 	const struct xt_DSCP_info *dinfo = par->targinfo;
+ 	u_int8_t dscp = ipv6_get_dsfield(ipv6_hdr(skb)) >> XT_DSCP_SHIFT;
+-
++#ifdef CONFIG_NF_CONNTRACK_DSCPREMARK_EXT
++	struct nf_conn *ct;
++	enum ip_conntrack_info ctinfo;
++#endif
+ 	if (dscp != dinfo->dscp) {
+ 		if (skb_ensure_writable(skb, sizeof(struct ipv6hdr)))
+ 			return NF_DROP;
+ 
+ 		ipv6_change_dsfield(ipv6_hdr(skb), XT_DSCP_ECN_MASK,
+ 				    dinfo->dscp << XT_DSCP_SHIFT);
++
++#ifdef CONFIG_NF_CONNTRACK_DSCPREMARK_EXT
++		ct = nf_ct_get(skb, &ctinfo);
++		if (!ct)
++			return XT_CONTINUE;
++
++		nf_conntrack_dscpremark_ext_set_dscp_rule_valid(ct);
++#endif
+ 	}
+ 	return XT_CONTINUE;
+ }

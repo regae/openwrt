@@ -1,0 +1,42 @@
+--- a/drivers/cpufreq/qcom-cpufreq-nvmem.c
++++ b/drivers/cpufreq/qcom-cpufreq-nvmem.c
+@@ -77,9 +77,9 @@ static void get_krait_bin_format_a(struc
+ 
+ 	if (*speed == 0xf) {
+ 		*speed = 0;
+-		dev_warn(cpu_dev, "Speed bin: Defaulting to %d\n", *speed);
++		pr_info("Speed bin: Defaulting to %d\n", *speed);
+ 	} else {
+-		dev_dbg(cpu_dev, "Speed bin: %d\n", *speed);
++		pr_info("Speed bin: %d\n", *speed);
+ 	}
+ 
+ 	*pvs = (pte_efuse >> 10) & 0x7;
+@@ -88,9 +88,9 @@ static void get_krait_bin_format_a(struc
+ 
+ 	if (*pvs == 0x7) {
+ 		*pvs = 0;
+-		dev_warn(cpu_dev, "PVS bin: Defaulting to %d\n", *pvs);
++		pr_info("PVS bin: Defaulting to %d\n", *pvs);
+ 	} else {
+-		dev_dbg(cpu_dev, "PVS bin: %d\n", *pvs);
++		pr_info("PVS bin: %d\n", *pvs);
+ 	}
+ }
+ 
+--- a/drivers/soc/qcom/smem.c
++++ b/drivers/soc/qcom/smem.c
+@@ -941,9 +941,13 @@ static int qcom_smem_probe(struct platform_device *pdev)
+ 			dev_err(&pdev->dev, "failed to remap %pa\n", &smem->regions[i].aux_base);
+ 			return -ENOMEM;
+ 		}
++		dev_info(&pdev->dev, "num_regions: %d, aux_base: %pa, virt_base: %pa\n",
++							  num_regions, &smem->regions[i].aux_base, &smem->regions[i].virt_base);
+ 	}
+ 
+ 	header = smem->regions[0].virt_base;
++	dev_info(&pdev->dev, "init: %u, reserved: %u\n",
++						  le32_to_cpu(header->initialized), le32_to_cpu(header->reserved));
+ 	if (le32_to_cpu(header->initialized) != 1 ||
+ 	    le32_to_cpu(header->reserved)) {
+ 		dev_err(&pdev->dev, "SMEM is not initialized by SBL\n");
