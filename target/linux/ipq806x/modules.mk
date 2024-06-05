@@ -43,3 +43,19 @@ define KernelPackage/sound-soc-ipq8064-storm/description
 endef
 
 $(eval $(call KernelPackage,sound-soc-ipq8064-storm))
+
+
+define KernelPackage/dwmac-ipq806x
+  SUBMENU:=Network Devices
+  TITLE:=IPQ806x dwmac support
+  DEPENDS:=+kmod-stmmac-core
+  KCONFIG:=CONFIG_DWMAC_IPQ806X
+  FILES:=$(LINUX_DIR)/drivers/net/ethernet/stmicro/stmmac/dwmac-ipq806x.ko
+  AUTOLOAD:=$(call AutoLoad,15,dwmac-ipq806x)
+endef
+
+define KernelPackage/dwmac-ipq806x/description
+  Support for Ethernet controller on IPQ806x SoC.
+endef
+
+$(eval $(call KernelPackage,dwmac-ipq806x))
