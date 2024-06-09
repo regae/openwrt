@@ -252,13 +252,13 @@ config BUSYBOX_DEFAULT_FEATURE_EDITING_HISTORY
 	default 256
 config BUSYBOX_DEFAULT_FEATURE_EDITING_SAVEHISTORY
 	bool
-	default n
+	default y
 config BUSYBOX_DEFAULT_FEATURE_EDITING_SAVE_ON_EXIT
 	bool
 	default n
 config BUSYBOX_DEFAULT_FEATURE_REVERSE_SEARCH
 	bool
-	default n
+	default y
 config BUSYBOX_DEFAULT_FEATURE_TAB_COMPLETION
 	bool
 	default y
@@ -804,10 +804,10 @@ config BUSYBOX_DEFAULT_FEATURE_SPLIT_FANCY
 	default n
 config BUSYBOX_DEFAULT_STAT
 	bool
-	default n
+	default y
 config BUSYBOX_DEFAULT_FEATURE_STAT_FORMAT
 	bool
-	default n
+	default y
 config BUSYBOX_DEFAULT_FEATURE_STAT_FILESYSTEM
 	bool
 	default n
@@ -901,7 +901,7 @@ config BUSYBOX_DEFAULT_UNLINK
 	default n
 config BUSYBOX_DEFAULT_USLEEP
 	bool
-	default n
+	default y
 config BUSYBOX_DEFAULT_UUDECODE
 	bool
 	default n
@@ -2035,7 +2035,7 @@ config BUSYBOX_DEFAULT_FEATURE_DEVFS
 	default n
 config BUSYBOX_DEFAULT_DEVMEM
 	bool
-	default n
+	default y
 config BUSYBOX_DEFAULT_FBSPLASH
 	bool
 	default n
