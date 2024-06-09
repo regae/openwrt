@@ -359,19 +359,13 @@
 	status = "okay";
 	qcom,mode = <GSBI_PROT_SPI>;
 
-	spi4: spi@1a280000 {
+	spi5: spi@1a280000 {
 		status = "okay";
 		spi-max-frequency = <50000000>;
 		pinctrl-0 = <&spi_pins>;
 		pinctrl-names = "default";
 
 		cs-gpios = <&qcom_pinmux 20 0>;
-
-		dmas = <&adm_dma 6>,
-			<&adm_dma 5>;
-		dma-names = "rx", "tx";
-		qcom,rx-crci = <9>;
-		qcom,tx-crci = <10>;
 
 		flash: flash@0 {
 			compatible = "jedec,spi-nor";
