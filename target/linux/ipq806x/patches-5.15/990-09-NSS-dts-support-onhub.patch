@@ -1,6 +1,6 @@
 --- a/arch/arm/boot/dts/qcom-ipq8064-onhub.dtsi
 +++ b/arch/arm/boot/dts/qcom-ipq8064-onhub.dtsi
-@@ -106,6 +106,150 @@
+@@ -113,6 +113,150 @@
  			pinctrl-0 = <&sdmode_pins>;
  			sdmode-gpios = <&qcom_pinmux 25 GPIO_ACTIVE_HIGH>;
  		};
@@ -151,7 +151,7 @@
  	};
  };
  
-@@ -294,9 +438,20 @@
+@@ -301,9 +445,20 @@
  
  &gmac0 {
  	status = "okay";
@@ -167,12 +167,12 @@
 +	qcom,forced-speed = <1000>;	/* Force speed 1G */
 +	qcom,forced-duplex = <1>;	/* Force duplex FD */
 +	qcom,socver = <0>;
-+	local-mac-address = [00 00 00 00 00 00];
++	local-mac-address = [f4 f2 6d aa ee 00];
 +	mdiobus = <&mdio>;
  
  	pinctrl-0 = <&rgmii0_pins>;
  	pinctrl-names = "default";
-@@ -309,9 +464,20 @@
+@@ -316,9 +471,20 @@
  
  &gmac2 {
  	status = "okay";
@@ -188,7 +188,7 @@
 +	qcom,forced-speed = <1000>;	/* Force speed 1G */
 +	qcom,forced-duplex = <1>;	/* Force duplex FD */
 +	qcom,socver = <0>;
-+	local-mac-address = [00 00 00 00 00 00];
++	local-mac-address = [f4 f2 6d aa e3 7a];
 +	mdiobus = <&mdio>;
  
  	fixed-link {

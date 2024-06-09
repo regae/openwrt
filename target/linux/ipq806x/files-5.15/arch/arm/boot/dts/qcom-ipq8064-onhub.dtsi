@@ -21,6 +21,12 @@
 		bootargs-append = " coherent_pool=2M";
 	};
 
+	/delete-node/ memory;
+	memory {
+		device_type = "memory";
+		linux,usable-memory = <0x40000000 0x3e000000>;
+	};
+
 	reserved-memory {
 		#address-cells = <1>;
 		#size-cells = <1>;
