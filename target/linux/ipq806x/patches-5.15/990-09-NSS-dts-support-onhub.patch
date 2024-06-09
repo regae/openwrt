@@ -167,7 +167,7 @@
 +	qcom,forced-speed = <1000>;	/* Force speed 1G */
 +	qcom,forced-duplex = <1>;	/* Force duplex FD */
 +	qcom,socver = <0>;
-+	local-mac-address = [f4 f2 6d aa ee 00];
++	local-mac-address = [00 00 00 00 00 00];
 +	mdiobus = <&mdio>;
  
  	pinctrl-0 = <&rgmii0_pins>;
@@ -188,7 +188,7 @@
 +	qcom,forced-speed = <1000>;	/* Force speed 1G */
 +	qcom,forced-duplex = <1>;	/* Force duplex FD */
 +	qcom,socver = <0>;
-+	local-mac-address = [f4 f2 6d aa e3 7a];
++	local-mac-address = [00 00 00 00 00 00];
 +	mdiobus = <&mdio>;
  
  	fixed-link {
