@@ -1,6 +1,6 @@
 --- a/include/uapi/linux/pkt_sched.h
 +++ b/include/uapi/linux/pkt_sched.h
-@@ -119,6 +119,251 @@ enum {
+@@ -119,6 +119,250 @@ enum {
  
  #define TCA_STAB_MAX (__TCA_STAB_MAX - 1)
  
@@ -248,13 +248,12 @@
 +	__u8	accel_mode;	/* Dictates which data plane offloads the qdisc */
 +};
 +
-+
  /* FIFO section */
  
  struct tc_fifo_qopt {
 --- a/tc/Makefile
 +++ b/tc/Makefile
-@@ -82,6 +82,7 @@ TCMODULES += q_etf.o
+@@ -81,6 +81,7 @@ TCMODULES += q_etf.o
  TCMODULES += q_taprio.o
  TCMODULES += q_plug.o
  TCMODULES += q_ets.o
@@ -264,20 +263,22 @@
  ifeq ($(TC_CONFIG_ATM),y)
 --- /dev/null
 +++ b/tc/q_nss.c
-@@ -0,0 +1,1826 @@
+@@ -0,0 +1,1827 @@
 +/*
 + **************************************************************************
-+ * Copyright (c) 2015, 2018 The Linux Foundation. All rights reserved.
-+ * Permission to use, copy, modify, and/or distribute this software for
-+ * any purpose with or without fee is hereby granted, provided that the
-+ * above copyright notice and this permission notice appear in all copies.
++ * Copyright (c) 2015, 2018, 2020, The Linux Foundation. All rights reserved.
++ *
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
 + * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
 + * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
 + * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
 + * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
 + * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
-+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
-+ * OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
++ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
++ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 + **************************************************************************
 + */
 +
@@ -385,7 +386,7 @@
 +	return 0;
 +}
 +
-+static int nsswred_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
++static int nsswred_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n, const char *dev)
 +{
 +	struct rtattr *tail;
 +	struct tc_nsswred_qopt opt;
@@ -602,7 +603,7 @@
 +	fprintf(stderr, "Usage: ...  nsspfifo [ limit PACKETS ] [ set_default ] [ accel_mode ]\n");
 +}
 +
-+static int nssfifo_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
++static int nssfifo_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n, const char *dev)
 +{
 +	struct rtattr *tail;
 +	struct tc_nssfifo_qopt opt;
@@ -709,7 +710,7 @@
 +	fprintf(stderr, "Value of target and interval should be greater than 1ms\n");
 +}
 +
-+static int nssfq_codel_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
++static int nssfq_codel_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n, const char *dev)
 +{
 +	struct rtattr *tail;
 +	struct tc_nsscodel_qopt opt;
@@ -872,7 +873,7 @@
 +	fprintf(stderr, "Value of target and interval should be greater than 1ms\n");
 +}
 +
-+static int nsscodel_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
++static int nsscodel_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n, const char *dev)
 +{
 +	struct rtattr *tail;
 +	struct tc_nsscodel_qopt opt;
@@ -1008,7 +1009,7 @@
 +	fprintf(stderr, "Usage: ... nsstbl burst BYTES rate BPS [ mtu BYTES ] [ accel_mode ]\n");
 +}
 +
-+static int nsstbl_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
++static int nsstbl_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n, const char *dev)
 +{
 +	int ok = 0;
 +	struct rtattr *tail;
@@ -1147,7 +1148,7 @@
 +	fprintf(stderr, "Usage: ... nssprio [ bands NUMBER (default 256) ] [ accel_mode ]\n");
 +}
 +
-+static int nssprio_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
++static int nssprio_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n, const char *dev)
 +{
 +	int ok = 0;
 +	struct rtattr *tail;
@@ -1254,7 +1255,7 @@
 +	fprintf(stderr, "NSSBF: Illegal \"%s\"\n", arg);
 +}
 +
-+static int nssbf_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
++static int nssbf_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n, const char *dev)
 +{
 +	struct tc_nssbf_qopt opt;
 +	struct rtattr *tail;
@@ -1329,7 +1330,7 @@
 +	return 0;
 +}
 +
-+static int nssbf_parse_class_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
++static int nssbf_parse_class_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n, const char *dev)
 +{
 +	int ok = 0;
 +	struct rtattr *tail;
@@ -1459,7 +1460,7 @@
 +	fprintf(stderr, "Usage (class): ... nsswrr quantum PACKETS ]\n");
 +}
 +
-+static int nsswrr_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
++static int nsswrr_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n, const char *dev)
 +{
 +	struct tc_nsswrr_qopt opt;
 +	bool accel_mode = false;
@@ -1523,7 +1524,7 @@
 +	return 0;
 +}
 +
-+static int nsswrr_parse_class_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
++static int nsswrr_parse_class_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n, const char *dev)
 +{
 +	int ok = 0;
 +	struct rtattr *tail;
@@ -1605,7 +1606,7 @@
 +	fprintf(stderr, "Usage (class): ... nsswfq quantum BYTES ]\n");
 +}
 +
-+static int nsswfq_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
++static int nsswfq_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n, const char *dev)
 +{
 +	struct tc_nsswfq_qopt opt;
 +	bool accel_mode = false;
@@ -1669,7 +1670,7 @@
 +	return 0;
 +}
 +
-+static int nsswfq_parse_class_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
++static int nsswfq_parse_class_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n, const char *dev)
 +{
 +	int ok = 0;
 +	struct rtattr *tail;
@@ -1761,7 +1762,7 @@
 +	fprintf(stderr, "NSSHTB: Illegal \"%s\"\n", arg);
 +}
 +
-+static int nsshtb_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
++static int nsshtb_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n, const char *dev)
 +{
 +	struct tc_nsshtb_qopt opt;
 +	struct rtattr *tail;
@@ -1839,7 +1840,7 @@
 +	return 0;
 +}
 +
-+static int nsshtb_parse_class_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
++static int nsshtb_parse_class_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n, const char *dev)
 +{
 +	int ok = 0;
 +	struct rtattr *tail;
@@ -1975,7 +1976,6 @@
 +{
 +	struct rtattr *tb[TCA_NSSHTB_MAX + 1];
 +	struct tc_nsshtb_class_qopt *qopt;
-+	SPRINT_BUF(b1);
 +
 +	if (opt == NULL)
 +		return 0;
@@ -2016,7 +2016,7 @@
 +	fprintf(stderr, "Usage: ...  nssblackhole [ set_default ] [ accel_mode ]\n");
 +}
 +
-+static int nssblackhole_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
++static int nssblackhole_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n, const char *dev)
 +{
 +	struct rtattr *tail;
 +	struct tc_nssblackhole_qopt opt;
