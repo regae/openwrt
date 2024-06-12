@@ -1,10 +1,91 @@
---- a/drivers/net/bonding/bond_3ad.c 
-+++ b/drivers/net/bonding/bond_3ad.c 
-@@ -113,8 +113,40 @@ static void ad_update_actor_keys(struct port *port, bo
- static void ad_marker_response_received(struct bond_marker *marker,
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -762,6 +762,7 @@ typedef unsigned char *sk_buff_data_t;
+  *	@offload_fwd_mark: Packet was L2-forwarded in hardware
+  *	@offload_l3_fwd_mark: Packet was L3-forwarded in hardware
+  *	@tc_skip_classify: do not classify packet. set by IFB device
++ *	@tc_skip_classify_offload: do not classify packet set by offload IFB device
+  *	@tc_at_ingress: used within tc_classify to distinguish in/egress
+  *	@redirected: packet was redirected by packet classifier
+  *	@from_ingress: packet was redirected from the ingress path
+@@ -939,6 +940,7 @@ struct sk_buff {
+ #ifdef CONFIG_NET_XGRESS
+ 	__u8			tc_at_ingress:1;	/* See TC_AT_INGRESS_MASK */
+ 	__u8			tc_skip_classify:1;
++	__u8			tc_skip_classify_offload:1;
+ #endif
+ 	__u8			remcsum_offload:1;
+ 	__u8			csum_complete_sw:1;
+--- /dev/null
++++ b/include/uapi/linux/tc_act/tc_nss_mirred.h
+@@ -0,0 +1,31 @@
++#ifndef __LINUX_TC_NSS_MIRRED_H
++#define __LINUX_TC_NSS_MIRRED_H
++
++#include <linux/pkt_cls.h>
++
++/*
++ * Types of parameters for nss mirred action.
++ */
++enum {
++	TC_NSS_MIRRED_UNSPEC,
++	TC_NSS_MIRRED_TM,
++	TC_NSS_MIRRED_PARMS,
++	__TC_NSS_MIRRED_MAX
++};
++#define TC_NSS_MIRRED_MAX (__TC_NSS_MIRRED_MAX - 1)
++
++/*
++ * tc_nss_mirred
++ *	tc command structure for nss mirred action.
++ */
++struct tc_nss_mirred {
++	tc_gen;			/* General tc structure. */
++	__u32 from_ifindex;	/* ifindex of the port from which traffic
++				 * will be redirected.
++				 */
++	__u32 to_ifindex;	/* ifindex of the port to which traffic
++				 * will be redirected.
++				 */
++};
++
++#endif	/* __LINUX_TC_NSS_MIRRED_H */
+--- a/net/netfilter/nf_conntrack_extend.c
++++ b/net/netfilter/nf_conntrack_extend.c
+@@ -23,6 +23,7 @@
+ #include <net/netfilter/nf_conntrack_labels.h>
+ #include <net/netfilter/nf_conntrack_synproxy.h>
+ #include <net/netfilter/nf_conntrack_act_ct.h>
++#include <net/netfilter/nf_conntrack_dscpremark_ext.h>
+ #include <net/netfilter/nf_nat.h>
+ 
+ #define NF_CT_EXT_PREALLOC	128u /* conntrack events are on by default */
+@@ -54,6 +55,9 @@ static const u8 nf_ct_ext_type_len[NF_CT
+ #if IS_ENABLED(CONFIG_NET_ACT_CT)
+ 	[NF_CT_EXT_ACT_CT] = sizeof(struct nf_conn_act_ct_ext),
+ #endif
++#ifdef CONFIG_NF_CONNTRACK_DSCPREMARK_EXT
++	[NF_CT_EXT_DSCPREMARK] = sizeof(struct nf_ct_dscpremark_ext),
++#endif
+ };
+ 
+ static __always_inline unsigned int total_extension_size(void)
+@@ -86,6 +90,9 @@ static __always_inline unsigned int tota
+ #if IS_ENABLED(CONFIG_NET_ACT_CT)
+ 		+ sizeof(struct nf_conn_act_ct_ext)
+ #endif
++#ifdef CONFIG_NF_CONNTRACK_DSCPREMARK_EXT
++	    + sizeof(struct nf_ct_dscpremark_ext)
++#endif
+ 	;
+ }
+ 
+--- a/drivers/net/bonding/bond_3ad.c
++++ b/drivers/net/bonding/bond_3ad.c
+@@ -116,6 +116,38 @@ static void ad_marker_response_received(
  					struct port *port);
  static void ad_update_actor_keys(struct port *port, bool reset);
-+
+ 
 +struct bond_cb __rcu *bond_cb;
 +
 +int bond_register_cb(struct bond_cb *cb)
@@ -28,28 +109,27 @@
 +void bond_unregister_cb(void)
 +{
 +	struct bond_cb *lag_cb_main;
- 
++
 +	rcu_read_lock();
 +	lag_cb_main = rcu_dereference(bond_cb);
 +	rcu_assign_pointer(bond_cb, NULL);
 +	rcu_read_unlock();
- 
++
 +	kfree(lag_cb_main);
 +}
 +EXPORT_SYMBOL(bond_unregister_cb);
-+
+ 
  /* ================= api to bonding and kernel code ================== */
  
- /**
-@@ -422,7 +454,6 @@ static u16 __ad_timer_to_ticks(u16 timer_type, u16 par
- 
+@@ -430,7 +462,6 @@ static u16 __ad_timer_to_ticks(u16 timer
  	return retval;
  }
--
  
+-
  /* ================= ad_rx_machine helper functions ================== */
  
-@@ -1063,6 +1094,28 @@ static void ad_mux_machine(struct port *port, bool *up
+ /**
+@@ -1073,6 +1104,28 @@ static void ad_mux_machine(struct port *
  			ad_disable_collecting_distributing(port,
  							   update_slave_arr);
  			port->ntt = true;
@@ -78,7 +158,7 @@
  			break;
  		case AD_MUX_COLLECTING_DISTRIBUTING:
  			port->actor_oper_port_state |= LACP_STATE_COLLECTING;
-@@ -1907,6 +1960,7 @@ static void ad_enable_collecting_distributing(struct p
+@@ -1917,6 +1970,7 @@ static void ad_enable_collecting_distrib
  					      bool *update_slave_arr)
  {
  	if (port->aggregator->is_active) {
@@ -86,7 +166,7 @@
  		slave_dbg(port->slave->bond->dev, port->slave->dev,
  			  "Enabling port %d (LAG %d)\n",
  			  port->actor_port_number,
-@@ -1914,6 +1968,14 @@ static void ad_enable_collecting_distributing(struct p
+@@ -1924,6 +1978,14 @@ static void ad_enable_collecting_distrib
  		__enable_port(port);
  		/* Slave array needs update */
  		*update_slave_arr = true;
@@ -101,12 +181,10 @@
  	}
  }
  
-@@ -2677,6 +2739,102 @@ int bond_3ad_get_active_agg_info(struct bonding *bond,
- 	rcu_read_unlock();
- 
+@@ -2683,6 +2745,102 @@ int bond_3ad_get_active_agg_info(struct
  	return ret;
-+}
-+
+ }
+ 
 +/* bond_3ad_get_tx_dev - Calculate egress interface for a given packet,
 + * for a LAG that is configured in 802.3AD mode
 + * @skb: pointer to skb to be egressed
@@ -201,12 +279,14 @@
 +		return first_ok_slave->dev;
 +
 +	return NULL;
- }
- 
++}
++
  int bond_3ad_lacpdu_recv(const struct sk_buff *skb, struct bonding *bond,
---- a/drivers/net/bonding/bond_main.c 
-+++ b/drivers/net/bonding/bond_main.c 
-@@ -250,6 +250,7 @@ static struct flow_dissector flow_keys_bonding __read_
+ 			 struct slave *slave)
+ {
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -255,6 +255,7 @@ static const struct flow_dissector_key f
  };
  
  static struct flow_dissector flow_keys_bonding __read_mostly;
@@ -214,7 +294,7 @@
  
  /*-------------------------- Forward declarations ---------------------------*/
  
-@@ -336,6 +337,19 @@ static bool bond_xdp_check(struct bonding *bond)
+@@ -341,6 +342,19 @@ static bool bond_xdp_check(struct bondin
  	}
  }
  
@@ -234,11 +314,10 @@
  /*---------------------------------- VLAN -----------------------------------*/
  
  /* In the following 2 functions, bond_vlan_rx_add_vid and bond_vlan_rx_kill_vid,
-@@ -1153,6 +1167,21 @@ void bond_change_active_slave(struct bonding *bond, st
- 
+@@ -1188,6 +1202,21 @@ void bond_change_active_slave(struct bon
  			if (BOND_MODE(bond) == BOND_MODE_8023AD)
  				bond_3ad_handle_link_change(new_active, BOND_LINK_UP);
-+
+ 
 +			if (bond->params.mode == BOND_MODE_XOR) {
 +				struct bond_cb *lag_cb_main;
 +
@@ -253,10 +332,11 @@
 +				}
 +				rcu_read_unlock();
 +			}
- 
++
  			if (bond_is_lb(bond))
  				bond_alb_handle_link_change(bond, new_active, BOND_LINK_UP);
-@@ -1777,6 +1806,7 @@ int bond_enslave(struct net_device *bond_dev, struct n
+ 		} else {
+@@ -1832,6 +1861,7 @@ int bond_enslave(struct net_device *bond
  	const struct net_device_ops *slave_ops = slave_dev->netdev_ops;
  	struct slave *new_slave = NULL, *prev_slave;
  	struct sockaddr_storage ss;
@@ -264,7 +344,7 @@
  	int link_reporting;
  	int res = 0, i;
  
-@@ -2218,6 +2248,13 @@ int bond_enslave(struct net_device *bond_dev, struct n
+@@ -2277,6 +2307,13 @@ int bond_enslave(struct net_device *bond
  		   bond_is_active_slave(new_slave) ? "an active" : "a backup",
  		   new_slave->link != BOND_LINK_DOWN ? "an up" : "a down");
  
@@ -278,7 +358,7 @@
  	/* enslave is successful */
  	bond_queue_slave_event(new_slave);
  	return 0;
-@@ -2283,6 +2320,13 @@ err_undo_flags:
+@@ -2342,6 +2379,13 @@ err_undo_flags:
  		}
  	}
  
@@ -292,7 +372,7 @@
  	return res;
  }
  
-@@ -2304,6 +2348,7 @@ static int __bond_release_one(struct net_device *bond_
+@@ -2363,6 +2407,7 @@ static int __bond_release_one(struct net
  	struct bonding *bond = netdev_priv(bond_dev);
  	struct slave *slave, *oldcurrent;
  	struct sockaddr_storage ss;
@@ -300,7 +380,7 @@
  	int old_flags = bond_dev->flags;
  	netdev_features_t old_features = bond_dev->features;
  
-@@ -2326,6 +2371,13 @@ static int __bond_release_one(struct net_device *bond_
+@@ -2385,6 +2430,13 @@ static int __bond_release_one(struct net
  
  	bond_set_slave_inactive_flags(slave, BOND_SLAVE_NOTIFY_NOW);
  
@@ -314,7 +394,7 @@
  	bond_sysfs_slave_del(slave);
  
  	/* recompute stats just before removing the slave */
-@@ -2644,6 +2696,8 @@ static void bond_miimon_commit(struct bonding *bond)
+@@ -2707,6 +2759,8 @@ static void bond_miimon_commit(struct bo
  	struct slave *slave, *primary, *active;
  	bool do_failover = false;
  	struct list_head *iter;
@@ -323,18 +403,18 @@
  
  	ASSERT_RTNL();
  
-@@ -2680,6 +2734,10 @@ static void bond_miimon_commit(struct bonding *bond)
- 				/* make it immediately active */
+@@ -2746,6 +2800,10 @@ static void bond_miimon_commit(struct bo
  				bond_set_active_slave(slave);
  			}
-+
+ 
 +			if ((bond->params.mode == BOND_MODE_XOR) &&
 +			    (!slave_dev))
 +				slave_dev = slave->dev;
- 
++
  			slave_info(bond->dev, slave->dev, "link status definitely up, %u Mbps %s duplex\n",
  				   slave->speed == SPEED_UNKNOWN ? 0 : slave->speed,
-@@ -2727,6 +2785,14 @@ do_failover:
+ 				   slave->duplex ? "full" : "half");
+@@ -2794,6 +2852,14 @@ static void bond_miimon_commit(struct bo
  		unblock_netpoll_tx();
  	}
  
@@ -349,7 +429,7 @@
  	bond_set_carrier(bond);
  }
  
-@@ -3746,6 +3812,211 @@ static bool bond_flow_ip(struct sk_buff *skb, struct f
+@@ -4049,6 +4115,211 @@ static inline u32 bond_eth_hash(struct s
  	return ep->h_dest[5] ^ ep->h_source[5] ^ be16_to_cpu(ep->h_proto);
  }
  
@@ -561,7 +641,7 @@
  static bool bond_flow_ip(struct sk_buff *skb, struct flow_keys *fk, const void *data,
  			 int hlen, __be16 l2_proto, int *nhoff, int *ip_proto, bool l34)
  {
-@@ -4886,15 +5157,22 @@ static netdev_tx_t bond_3ad_xor_xmit(struct sk_buff *s
+@@ -5176,15 +5447,22 @@ static netdev_tx_t bond_3ad_xor_xmit(str
  				     struct net_device *dev)
  {
  	struct bonding *bond = netdev_priv(dev);
@@ -591,7 +671,7 @@
  }
  
  /* in broadcast mode, we send everything to all usable interfaces. */
-@@ -5138,8 +5416,9 @@ static netdev_tx_t __bond_start_xmit(struct sk_buff *s
+@@ -5434,8 +5712,9 @@ static netdev_tx_t __bond_start_xmit(str
  		return bond_xmit_roundrobin(skb, dev);
  	case BOND_MODE_ACTIVEBACKUP:
  		return bond_xmit_activebackup(skb, dev);
@@ -602,7 +682,7 @@
  		return bond_3ad_xor_xmit(skb, dev);
  	case BOND_MODE_BROADCAST:
  		return bond_xmit_broadcast(skb, dev);
-@@ -5447,6 +5726,10 @@ static void bond_destructor(struct net_device *bond_de
+@@ -5873,6 +6152,10 @@ static void bond_destructor(struct net_d
  		destroy_workqueue(bond->wq);
  
  	free_percpu(bond->rr_tx_counter);
@@ -613,7 +693,7 @@
  }
  
  void bond_setup(struct net_device *bond_dev)
-@@ -6021,6 +6304,14 @@ int bond_create(struct net *net, const char *name)
+@@ -6421,6 +6704,14 @@ int bond_create(struct net *net, const c
  
  	bond_work_init_all(bond);
  
@@ -628,16 +708,12 @@
  out:
  	rtnl_unlock();
  	return res;
---- a/drivers/net/ifb.c 
-+++ b/drivers/net/ifb.c 
-@@ -121,9 +121,34 @@ resched:
- resched:
- 		txp->tasklet_pending = 1;
- 		tasklet_schedule(&txp->ifb_tasklet);
-+	}
-+
-+}
-+
+--- a/drivers/net/ifb.c
++++ b/drivers/net/ifb.c
+@@ -151,6 +151,31 @@ resched:
+ 
+ }
+ 
 +void ifb_update_offload_stats(struct net_device *dev, struct pcpu_sw_netstats *offload_stats)
 +{
 +	struct ifb_dev_private *dp;
@@ -649,8 +725,8 @@
 +
 +	if (!(dev->priv_flags_ext & IFF_EXT_IFB)) {
 +		return;
- 	}
- 
++	}
++
 +	dp = netdev_priv(dev);
 +	txp = dp->tx_private;
 +
@@ -660,12 +736,13 @@
 +	txp->tx_stats.packets += u64_stats_read(&offload_stats->tx_packets);
 +	txp->tx_stats.bytes += u64_stats_read(&offload_stats->tx_bytes);
 +	u64_stats_update_end(&txp->rx_stats.sync);
- }
++}
 +EXPORT_SYMBOL(ifb_update_offload_stats);
- 
++
  static void ifb_stats64(struct net_device *dev,
  			struct rtnl_link_stats64 *stats)
-@@ -224,6 +249,7 @@ static void ifb_setup(struct net_device *dev)
+ {
+@@ -326,6 +351,7 @@ static void ifb_setup(struct net_device
  	dev->flags |= IFF_NOARP;
  	dev->flags &= ~IFF_MULTICAST;
  	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
@@ -673,11 +750,11 @@
  	netif_keep_dst(dev);
  	eth_hw_addr_random(dev);
  	dev->needs_free_netdev = true;
---- a/drivers/net/ppp/ppp_generic.c 
-+++ b/drivers/net/ppp/ppp_generic.c 
-@@ -1,4 +1,20 @@
+--- a/drivers/net/ppp/ppp_generic.c
++++ b/drivers/net/ppp/ppp_generic.c
+@@ -1,5 +1,21 @@
  // SPDX-License-Identifier: GPL-2.0-or-later
-+/*
+ /*
 + **************************************************************************
 + * Copyright (c) 2016, The Linux Foundation.  All rights reserved.
 + * Permission to use, copy, modify, and/or distribute this software for
@@ -693,14 +770,14 @@
 + **************************************************************************
 + */
 +
- /*
++/*
   * Generic PPP layer for Linux.
   *
-@@ -252,6 +268,24 @@ struct ppp_net {
- /* Compare multilink sequence numbers (assumed to be 32 bits wide) */
+  * Copyright 1999-2002 Paul Mackerras.
+@@ -254,6 +270,24 @@ struct ppp_net {
  #define seq_before(a, b)	((s32)((a) - (b)) < 0)
  #define seq_after(a, b)		((s32)((a) - (b)) > 0)
-+
+ 
 +/*
 + * Registration/Unregistration methods
 + * for PPP channel connect and disconnect event notifications.
@@ -718,10 +795,11 @@
 +	raw_notifier_chain_unregister(&ppp_channel_connection_notifier_list, nb);
 +}
 +EXPORT_SYMBOL_GPL(ppp_channel_connection_unregister_notify);
- 
++
  /* Prototypes. */
  static int ppp_unattached_ioctl(struct net *net, struct ppp_file *pf,
-@@ -3452,6 +3486,7 @@ ppp_connect_channel(struct channel *pch, int unit)
+ 			struct file *file, unsigned int cmd, unsigned long arg);
+@@ -3453,6 +3487,7 @@ ppp_connect_channel(struct channel *pch,
  	struct ppp_net *pn;
  	int ret = -ENXIO;
  	int hdrlen;
@@ -729,7 +807,7 @@
  
  	pn = ppp_pernet(pch->chan_net);
  
-@@ -3484,6 +3519,8 @@ ppp_connect_channel(struct channel *pch, int unit)
+@@ -3485,6 +3520,8 @@ ppp_connect_channel(struct channel *pch,
  	++ppp->n_channels;
  	pch->ppp = ppp;
  	refcount_inc(&ppp->file.refcnt);
@@ -738,7 +816,7 @@
  	ppp_unlock(ppp);
  	ret = 0;
  
-@@ -3491,6 +3528,14 @@ ppp_connect_channel(struct channel *pch, int unit)
+@@ -3492,6 +3529,14 @@ ppp_connect_channel(struct channel *pch,
  	write_unlock_bh(&pch->upl);
   out:
  	mutex_unlock(&pn->all_ppp_mutex);
@@ -753,7 +831,7 @@
  	return ret;
  }
  
-@@ -3508,6 +3553,13 @@ ppp_disconnect_channel(struct channel *pch)
+@@ -3509,6 +3554,13 @@ ppp_disconnect_channel(struct channel *p
  	pch->ppp = NULL;
  	write_unlock_bh(&pch->upl);
  	if (ppp) {
@@ -767,12 +845,10 @@
  		/* remove it from the ppp unit's list */
  		ppp_lock(ppp);
  		list_del(&pch->clist);
-@@ -3585,8 +3637,212 @@ static void *unit_find(struct idr *p, int n)
- static void *unit_find(struct idr *p, int n)
- {
+@@ -3588,6 +3640,210 @@ static void *unit_find(struct idr *p, in
  	return idr_find(p, n);
-+}
-+
+ }
+ 
 +/* Updates the PPP interface statistics. */
 +void ppp_update_stats(struct net_device *dev, unsigned long rx_packets,
 +		      unsigned long rx_bytes, unsigned long tx_packets,
@@ -854,9 +930,9 @@
 +		return 1;
 +
 +	return 0;
- }
++}
 +EXPORT_SYMBOL(ppp_is_multilink);
- 
++
 +/* ppp_channel_get_protocol()
 + *	Call this to obtain the underlying protocol of the PPP channel,
 + *	e.g. PX_PROTO_OE
@@ -980,7 +1056,7 @@
  /* Module/initialization stuff */
  
  module_init(ppp_init);
-@@ -3603,6 +3859,8 @@ MODULE_LICENSE("GPL");
+@@ -3604,6 +3860,8 @@ EXPORT_SYMBOL(ppp_input_error);
  EXPORT_SYMBOL(ppp_output_wakeup);
  EXPORT_SYMBOL(ppp_register_compressor);
  EXPORT_SYMBOL(ppp_unregister_compressor);
@@ -989,8 +1065,8 @@
  MODULE_LICENSE("GPL");
  MODULE_ALIAS_CHARDEV(PPP_MAJOR, 0);
  MODULE_ALIAS_RTNL_LINK("ppp");
---- a/drivers/net/ppp/pppoe.c 
-+++ b/drivers/net/ppp/pppoe.c 
+--- a/drivers/net/ppp/pppoe.c
++++ b/drivers/net/ppp/pppoe.c
 @@ -62,6 +62,7 @@
  #include <linux/inetdevice.h>
  #include <linux/etherdevice.h>
@@ -999,7 +1075,7 @@
  #include <linux/init.h>
  #include <linux/if_ether.h>
  #include <linux/if_pppox.h>
-@@ -87,7 +88,7 @@ static const struct ppp_channel_ops pppoe_chan_ops;
+@@ -87,7 +88,7 @@
  static int __pppoe_xmit(struct sock *sk, struct sk_buff *skb);
  
  static const struct proto_ops pppoe_ops;
@@ -1008,7 +1084,7 @@
  
  /* per-net private data for this module */
  static unsigned int pppoe_net_id __read_mostly;
-@@ -645,6 +646,7 @@ static int pppoe_connect(struct socket *sock, struct s
+@@ -645,6 +646,7 @@ static int pppoe_connect(struct socket *
  	if (stage_session(po->pppoe_pa.sid)) {
  		pppox_unbind_sock(sk);
  		pn = pppoe_pernet(sock_net(sk));
@@ -1016,7 +1092,7 @@
  		delete_item(pn, po->pppoe_pa.sid,
  			    po->pppoe_pa.remote, po->pppoe_ifindex);
  		if (po->pppoe_dev) {
-@@ -692,7 +694,7 @@ static int pppoe_connect(struct socket *sock, struct s
+@@ -692,7 +694,7 @@ static int pppoe_connect(struct socket *
  
  		po->chan.mtu = dev->mtu - sizeof(struct pppoe_hdr) - 2;
  		po->chan.private = sk;
@@ -1025,7 +1101,7 @@
  
  		error = ppp_register_net_channel(dev_net(dev), &po->chan);
  		if (error) {
-@@ -995,9 +997,80 @@ static const struct ppp_channel_ops pppoe_chan_ops = {
+@@ -995,9 +997,80 @@ static int pppoe_fill_forward_path(struc
  	return 0;
  }
  
@@ -1109,9 +1185,9 @@
  };
  
  static int pppoe_recvmsg(struct socket *sock, struct msghdr *m,
---- a/drivers/net/ppp/pptp.c 
-+++ b/drivers/net/ppp/pptp.c 
-@@ -50,6 +50,8 @@ static struct pppox_sock *lookup_chan(u16 call_id, __b
+--- a/drivers/net/ppp/pptp.c
++++ b/drivers/net/ppp/pptp.c
+@@ -50,6 +50,8 @@ static struct proto pptp_sk_proto __read
  static const struct ppp_channel_ops pptp_chan_ops;
  static const struct proto_ops pptp_ops;
  
@@ -1120,7 +1196,7 @@
  static struct pppox_sock *lookup_chan(u16 call_id, __be32 s_addr)
  {
  	struct pppox_sock *sock;
-@@ -91,6 +93,53 @@ static int add_chan(struct pppox_sock *sock,
+@@ -91,6 +93,53 @@ static int lookup_chan_dst(u16 call_id,
  	return i < MAX_CALLID;
  }
  
@@ -1174,7 +1250,7 @@
  static int add_chan(struct pppox_sock *sock,
  		    struct pptp_addr *sa)
  {
-@@ -163,8 +212,11 @@ static int pptp_xmit(struct ppp_channel *chan, struct 
+@@ -163,8 +212,11 @@ static int pptp_xmit(struct ppp_channel
  
  	struct rtable *rt;
  	struct net_device *tdev;
@@ -1186,14 +1262,14 @@
  
  	if (sk_pppox(po)->sk_state & PPPOX_DEAD)
  		goto tx_error;
-@@ -258,9 +310,33 @@ static int pptp_xmit(struct ppp_channel *chan, struct 
+@@ -258,9 +310,33 @@ static int pptp_xmit(struct ppp_channel
  	ip_select_ident(net, skb, NULL);
  	ip_send_check(iph);
  
 -	ip_local_out(net, skb->sk, skb);
 -	return 1;
 +	pptp_ifindex = ppp_dev_index(chan);
-+
+ 
 +	/* set incoming interface as the ppp interface */
 +	if (skb->skb_iif)
 +		skb->skb_iif = pptp_ifindex;
@@ -1217,12 +1293,12 @@
 +	dev_put(pptp_dev);
 +	if (ret < 0)
 +		goto tx_error;
- 
++
 +	return 1;
  tx_error:
  	kfree_skb(skb);
  	return 1;
-@@ -314,6 +390,13 @@ static int pptp_rcv_core(struct sock *sk, struct sk_bu
+@@ -314,6 +390,13 @@ static int pptp_rcv_core(struct sock *sk
  		goto drop;
  
  	payload = skb->data + headersize;
@@ -1244,7 +1320,7 @@
  		return sk_receive_skb(sk_pppox(po), skb, 0);
  	}
  drop:
-@@ -473,7 +557,7 @@ static int pptp_connect(struct socket *sock, struct so
+@@ -473,7 +557,7 @@ static int pptp_connect(struct socket *s
  
  	opt->dst_addr = sp->sa_addr.pptp;
  	sk->sk_state |= PPPOX_CONNECTED;
@@ -1253,7 +1329,7 @@
   end:
  	release_sock(sk);
  	return error;
-@@ -603,6 +687,125 @@ static const struct ppp_channel_ops pptp_chan_ops = {
+@@ -603,6 +687,125 @@ static int pptp_ppp_ioctl(struct ppp_cha
  	return err;
  }
  
@@ -1379,9 +1455,9 @@
  static const struct ppp_channel_ops pptp_chan_ops = {
  	.start_xmit = pptp_xmit,
  	.ioctl      = pptp_ppp_ioctl,
---- a/drivers/net/vxlan/vxlan_core.c 
-+++ b/drivers/net/vxlan/vxlan_core.c 
-@@ -90,6 +90,20 @@ static inline bool vxlan_collect_metadata(struct vxlan
+--- a/drivers/net/vxlan/vxlan_core.c
++++ b/drivers/net/vxlan/vxlan_core.c
+@@ -65,6 +65,20 @@ static void vxlan_vs_del_dev(struct vxla
  /* salt for hash table */
  static u32 vxlan_salt __read_mostly;
  
@@ -1402,7 +1478,7 @@
  static inline bool vxlan_collect_metadata(struct vxlan_sock *vs)
  {
  	return vs->flags & VXLAN_F_COLLECT_METADATA ||
-@@ -367,6 +381,7 @@ static void __vxlan_fdb_notify(struct vxlan_dev *vxlan
+@@ -260,6 +274,7 @@ static void __vxlan_fdb_notify(struct vx
  {
  	struct net *net = dev_net(vxlan->dev);
  	struct sk_buff *skb;
@@ -1410,7 +1486,7 @@
  	int err = -ENOBUFS;
  
  	skb = nlmsg_new(vxlan_nlmsg_size(), GFP_ATOMIC);
-@@ -382,6 +397,10 @@ static void __vxlan_fdb_notify(struct vxlan_dev *vxlan
+@@ -275,6 +290,10 @@ static void __vxlan_fdb_notify(struct vx
  	}
  
  	rtnl_notify(skb, net, 0, RTNLGRP_NEIGH, NULL, GFP_ATOMIC);
@@ -1421,7 +1497,7 @@
  	return;
  errout:
  	if (err < 0)
-@@ -548,6 +567,18 @@ static struct vxlan_fdb *vxlan_find_mac(struct vxlan_d
+@@ -441,6 +460,18 @@ static struct vxlan_fdb *vxlan_find_mac(
  	return f;
  }
  
@@ -1440,17 +1516,17 @@
  /* caller should hold vxlan->hash_lock */
  static struct vxlan_rdst *vxlan_fdb_find_rdst(struct vxlan_fdb *f,
  					      union vxlan_addr *ip, __be16 port,
-@@ -2749,6 +2780,9 @@ static void vxlan_xmit_one(struct sk_buff *skb, struct
- 			dst_release(ndst);
+@@ -2604,6 +2635,9 @@ void vxlan_xmit_one(struct sk_buff *skb,
  			goto out_unlock;
  		}
-+
+ 
 +		/* Reset the skb_iif to Tunnels interface index */
 +		skb->skb_iif = dev->ifindex;
- 
++
  		tos = ip_tunnel_ecn_encap(tos, old_iph, skb);
  		ttl = ttl ? : ip4_dst_hoplimit(&rt->dst);
-@@ -2821,6 +2855,9 @@ static void vxlan_xmit_one(struct sk_buff *skb, struct
+ 		err = vxlan_build_skb(skb, ndst, sizeof(struct iphdr),
+@@ -2675,6 +2709,9 @@ void vxlan_xmit_one(struct sk_buff *skb,
  		if (err < 0)
  			goto tx_error;
  
@@ -1460,9 +1536,9 @@
  		udp_tunnel6_xmit_skb(ndst, sock6->sock->sk, skb, dev,
  				     &local_ip.sin6.sin6_addr,
  				     &dst->sin6.sin6_addr, tos, ttl,
---- a/include/linux/if_bridge.h 
-+++ b/include/linux/if_bridge.h 
-@@ -68,6 +68,18 @@ int br_ioctl_call(struct net *net, struct net_bridge *
+--- a/include/linux/if_bridge.h
++++ b/include/linux/if_bridge.h
+@@ -71,6 +71,18 @@ void brioctl_set(int (*hook)(struct net
  			     void __user *uarg));
  int br_ioctl_call(struct net *net, struct net_bridge *br, unsigned int cmd,
  		  struct ifreq *ifr, void __user *uarg);
@@ -1481,7 +1557,7 @@
  
  #if IS_ENABLED(CONFIG_BRIDGE) && IS_ENABLED(CONFIG_BRIDGE_IGMP_SNOOPING)
  int br_multicast_list_adjacent(struct net_device *dev,
-@@ -191,4 +203,26 @@ static inline clock_t br_get_ageing_time(const struct 
+@@ -213,4 +225,26 @@ static inline clock_t br_get_ageing_time
  }
  #endif
  
@@ -1508,9 +1584,9 @@
 +extern void br_fdb_unregister_notify(struct notifier_block *nb);
 +extern struct net_device *br_fdb_bridge_dev_get_and_hold(struct net_bridge *br);
  #endif
---- a/include/linux/if_pppox.h 
-+++ b/include/linux/if_pppox.h 
-@@ -38,6 +38,7 @@ struct pptp_opt {
+--- a/include/linux/if_pppox.h
++++ b/include/linux/if_pppox.h
+@@ -36,6 +36,7 @@ struct pptp_opt {
  	u32 ack_sent, ack_recv;
  	u32 seq_sent, seq_recv;
  	int ppp_flags;
@@ -1518,7 +1594,7 @@
  };
  #include <net/sock.h>
  
-@@ -93,4 +94,45 @@ enum {
+@@ -91,4 +92,45 @@ enum {
      PPPOX_DEAD		= 16  /* dead, useless, please clean me up!*/
  };
  
@@ -1564,9 +1640,9 @@
 +extern void pptp_unregister_gre_seq_offload_callback(void);
 +
  #endif /* !(__LINUX_IF_PPPOX_H) */
---- a/include/linux/netdevice.h 
-+++ b/include/linux/netdevice.h 
-@@ -1686,6 +1686,30 @@ enum netdev_extra_priv_flags {
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -1762,6 +1762,30 @@ enum netdev_priv_flags {
  	IFF_NO_IP_ALIGN			= BIT_ULL(34),
  };
  
@@ -1597,7 +1673,7 @@
  #define IFF_802_1Q_VLAN			IFF_802_1Q_VLAN
  #define IFF_EBRIDGE			IFF_EBRIDGE
  #define IFF_BONDING			IFF_BONDING
-@@ -1801,6 +1825,8 @@ enum netdev_ml_priv_type {
+@@ -1882,6 +1906,8 @@ enum netdev_stat_type {
   *	@xdp_features:	XDP capability supported by the device
   *	@priv_flags:	Like 'flags' but invisible to userspace,
   *			see if.h for the definitions
@@ -1606,7 +1682,7 @@
   *	@gflags:	Global flags ( kept as legacy )
   *	@padded:	How much padding added by alloc_netdev()
   *	@operstate:	RFC2863 operstate
-@@ -2018,6 +2044,7 @@ struct net_device {
+@@ -2127,6 +2153,7 @@ struct net_device {
  	unsigned int		flags;
  	xdp_features_t		xdp_features;
  	unsigned long long	priv_flags;
@@ -1614,7 +1690,7 @@
  	const struct net_device_ops *netdev_ops;
  	const struct xdp_metadata_ops *xdp_metadata_ops;
  	int			ifindex;
-@@ -2856,6 +2883,8 @@ enum netdev_cmd {
+@@ -2934,6 +2961,8 @@ enum netdev_cmd {
  	NETDEV_OFFLOAD_XSTATS_REPORT_USED,
  	NETDEV_OFFLOAD_XSTATS_REPORT_DELTA,
  	NETDEV_XDP_FEAT_CHANGE,
@@ -1623,7 +1699,7 @@
  };
  const char *netdev_cmd_to_name(enum netdev_cmd cmd);
  
-@@ -4733,6 +4762,15 @@ void dev_uc_init(struct net_device *dev);
+@@ -4659,6 +4688,15 @@ void dev_uc_flush(struct net_device *dev
  void dev_uc_init(struct net_device *dev);
  
  /**
@@ -1639,7 +1715,7 @@
   *  __dev_uc_sync - Synchonize device's unicast list
   *  @dev:  device to sync
   *  @sync: function to call if address should be added
-@@ -5291,6 +5329,11 @@ static inline bool netif_is_failover_slave(const struc
+@@ -5185,6 +5223,11 @@ static inline bool netif_is_failover_sla
  	return dev->priv_flags & IFF_FAILOVER_SLAVE;
  }
  
@@ -1651,22 +1727,21 @@
  /* This device needs to keep skb dst for qdisc enqueue or ndo_start_xmit() */
  static inline void netif_keep_dst(struct net_device *dev)
  {
---- a/include/linux/ppp_channel.h 
-+++ b/include/linux/ppp_channel.h 
-@@ -19,7 +19,12 @@
+--- a/include/linux/ppp_channel.h
++++ b/include/linux/ppp_channel.h
+@@ -19,6 +19,11 @@
  #include <linux/skbuff.h>
  #include <linux/poll.h>
  #include <net/net_namespace.h>
 +#include <linux/notifier.h>
- 
++
 +/* PPP channel connection event types */
 +#define PPP_CHANNEL_DISCONNECT	0
 +#define PPP_CHANNEL_CONNECT	1
-+
+ 
  struct net_device_path;
  struct net_device_path_ctx;
- struct ppp_channel;
-@@ -31,6 +36,14 @@ struct ppp_channel_ops {
+@@ -33,6 +38,14 @@ struct ppp_channel_ops {
  	int	(*fill_forward_path)(struct net_device_path_ctx *,
  				     struct net_device_path *,
  				     const struct ppp_channel *);
@@ -1681,7 +1756,7 @@
  };
  
  struct ppp_channel {
-@@ -45,6 +58,40 @@ struct ppp_channel {
+@@ -47,6 +60,40 @@ struct ppp_channel {
  };
  
  #ifdef __KERNEL__
@@ -1722,7 +1797,7 @@
  /* Called by the channel when it can send some more data. */
  extern void ppp_output_wakeup(struct ppp_channel *);
  
-@@ -74,6 +121,12 @@ extern char *ppp_dev_name(struct ppp_channel *);
+@@ -76,6 +123,12 @@ extern int ppp_unit_number(struct ppp_ch
  /* Get the device name associated with a channel, or NULL if none */
  extern char *ppp_dev_name(struct ppp_channel *);
  
@@ -1735,27 +1810,9 @@
  /*
   * SMP locking notes:
   * The channel code must ensure that when it calls ppp_unregister_channel,
---- a/include/linux/skbuff.h
-+++ b/include/linux/skbuff.h
-@@ -689,6 +689,7 @@ typedef unsigned char *sk_buff_data_t;
-  *	@offload_fwd_mark: Packet was L2-forwarded in hardware
-  *	@offload_l3_fwd_mark: Packet was L3-forwarded in hardware
-  *	@tc_skip_classify: do not classify packet. set by IFB device
-+ *	@tc_skip_classify_offload: do not classify packet set by offload IFB device
-  *	@tc_at_ingress: used within tc_classify to distinguish in/egress
-  *	@redirected: packet was redirected by packet classifier
-  *	@from_ingress: packet was redirected from the ingress path
-@@ -905,6 +906,7 @@ struct sk_buff {
- #ifdef CONFIG_NET_XGRESS
- 	__u8			tc_at_ingress:1;	/* See TC_AT_INGRESS_MASK */
- 	__u8			tc_skip_classify:1;
-+	__u8			tc_skip_classify_offload:1;
- #endif
- 	__u8			remcsum_offload:1;
- 	__u8			csum_complete_sw:1;
---- a/include/net/bond_3ad.h 
-+++ b/include/net/bond_3ad.h 
-@@ -303,8 +303,13 @@ void bond_3ad_update_ad_actor_settings(struct bonding 
+--- a/include/net/bond_3ad.h
++++ b/include/net/bond_3ad.h
+@@ -302,8 +302,13 @@ int bond_3ad_lacpdu_recv(const struct sk
  			 struct slave *slave);
  int bond_3ad_set_carrier(struct bonding *bond);
  void bond_3ad_update_lacp_rate(struct bonding *bond);
@@ -1770,9 +1827,9 @@
  size_t bond_3ad_stats_size(void);
  #endif /* _NET_BOND_3AD_H */
 -
---- a/include/net/bonding.h 
-+++ b/include/net/bonding.h 
-@@ -91,6 +91,8 @@
+--- a/include/net/bonding.h
++++ b/include/net/bonding.h
+@@ -90,6 +90,8 @@
  #define BOND_XFRM_FEATURES (NETIF_F_HW_ESP | NETIF_F_HW_ESP_TX_CSUM | \
  			    NETIF_F_GSO_ESP)
  
@@ -1781,7 +1838,7 @@
  #ifdef CONFIG_NET_POLL_CONTROLLER
  extern atomic_t netpoll_block_tx;
  
-@@ -257,6 +259,7 @@ struct bonding {
+@@ -261,6 +263,7 @@ struct bonding {
  	spinlock_t ipsec_lock;
  #endif /* CONFIG_XFRM_OFFLOAD */
  	struct bpf_prog *xdp_prog;
@@ -1789,7 +1846,7 @@
  };
  
  #define bond_slave_get_rcu(dev) \
-@@ -661,6 +664,11 @@ void bond_work_init_all(struct bonding *bond);
+@@ -683,6 +686,11 @@ struct bond_vlan_tag *bond_verify_device
  					      int level);
  int bond_update_slave_arr(struct bonding *bond, struct slave *skipslave);
  void bond_slave_arr_work_rearm(struct bonding *bond, unsigned long delay);
@@ -1801,7 +1858,7 @@
  void bond_work_init_all(struct bonding *bond);
  
  #ifdef CONFIG_PROC_FS
-@@ -746,4 +754,17 @@ static inline netdev_tx_t bond_tx_drop(struct net_devi
+@@ -787,4 +795,17 @@ static inline netdev_tx_t bond_tx_drop(s
  	return NET_XMIT_DROP;
  }
  
@@ -1819,17 +1876,17 @@
 +extern int bond_get_id(struct net_device *bond_dev);
 +
  #endif /* _NET_BONDING_H */
---- a/include/net/ip_tunnels.h 
-+++ b/include/net/ip_tunnels.h 
-@@ -567,4 +567,6 @@ static inline void ip_tunnel_info_opts_set(struct ip_t
+--- a/include/net/ip_tunnels.h
++++ b/include/net/ip_tunnels.h
+@@ -591,4 +591,6 @@ static inline void ip_tunnel_info_opts_s
  
  #endif /* CONFIG_INET */
  
 +void ipip6_update_offload_stats(struct net_device *dev, void *ptr);
 +void ip6_update_offload_stats(struct net_device *dev, void *ptr);
  #endif /* __NET_IP_TUNNELS_H */
---- a/include/net/netfilter/nf_conntrack_extend.h 
-+++ b/include/net/netfilter/nf_conntrack_extend.h 
+--- a/include/net/netfilter/nf_conntrack_extend.h
++++ b/include/net/netfilter/nf_conntrack_extend.h
 @@ -31,6 +31,9 @@ enum nf_ct_ext_id {
  #if IS_ENABLED(CONFIG_NET_ACT_CT)
  	NF_CT_EXT_ACT_CT,
@@ -1840,9 +1897,9 @@
  	NF_CT_EXT_NUM,
  };
  
---- a/include/net/sch_generic.h 
-+++ b/include/net/sch_generic.h 
-@@ -87,6 +87,7 @@ struct Qdisc {
+--- a/include/net/sch_generic.h
++++ b/include/net/sch_generic.h
+@@ -94,6 +94,7 @@ struct Qdisc {
  #define TCQ_F_INVISIBLE		0x80 /* invisible by default in dump */
  #define TCQ_F_NOLOCK		0x100 /* qdisc does not require locking */
  #define TCQ_F_OFFLOADED		0x200 /* qdisc is offloaded to HW */
@@ -1850,10 +1907,13 @@
  	u32			limit;
  	const struct Qdisc_ops	*ops;
  	struct qdisc_size_table	__rcu *stab;
-@@ -738,6 +739,40 @@ static inline bool skb_skip_tc_classify(struct sk_buff *skb)
- 	return false;
- }
- 
+@@ -748,6 +749,40 @@ static inline bool skb_skip_tc_classify(
+ 		return true;
+ 	}
+ #endif
++	return false;
++}
++
 +/*
 + * Set skb classify bit field.
 + */
@@ -1885,19 +1945,15 @@
 +		return true;
 +	}
 +#endif
-+	return false;
-+}
-+
- /* Reset all TX qdiscs greater than index of a device.  */
- static inline void qdisc_reset_all_tx_gt(struct net_device *dev, unsigned int i)
- {
---- a/include/net/vxlan.h 
-+++ b/include/net/vxlan.h 
-@@ -292,6 +292,19 @@ struct vxlan_dev {
- 					 VXLAN_F_COLLECT_METADATA  |	\
+ 	return false;
+ }
+ 
+--- a/include/net/vxlan.h
++++ b/include/net/vxlan.h
+@@ -352,6 +352,19 @@ struct vxlan_dev {
  					 VXLAN_F_VNIFILTER         |    \
  					 VXLAN_F_LOCALBYPASS)
-+
+ 
 +/*
 + * Application data for fdb notifier event
 + */
@@ -1910,10 +1966,11 @@
 +extern void vxlan_fdb_register_notify(struct notifier_block *nb);
 +extern void vxlan_fdb_unregister_notify(struct notifier_block *nb);
 +extern void vxlan_fdb_update_mac(struct vxlan_dev *vxlan, const u8 *mac, uint32_t vni);
- 
++
  struct net_device *vxlan_dev_create(struct net *net, const char *name,
  				    u8 name_assign_type, struct vxlan_config *conf);
-@@ -381,6 +394,15 @@ static inline unsigned short vxlan_get_sk_family(struc
+ 
+@@ -440,6 +453,15 @@ static inline __be32 vxlan_compute_rco(u
  	return vni_field;
  }
  
@@ -1929,9 +1986,9 @@
  static inline unsigned short vxlan_get_sk_family(struct vxlan_sock *vs)
  {
  	return vs->sock->sk->sk_family;
---- a/include/uapi/linux/pkt_cls.h 
-+++ b/include/uapi/linux/pkt_cls.h 
-@@ -136,6 +136,7 @@ enum tca_id {
+--- a/include/uapi/linux/pkt_cls.h
++++ b/include/uapi/linux/pkt_cls.h
+@@ -139,6 +139,7 @@ enum tca_id {
  	TCA_ID_MPLS,
  	TCA_ID_CT,
  	TCA_ID_GATE,
@@ -1939,8 +1996,8 @@
  	/* other actions go here */
  	__TCA_ID_MAX = 255
  };
---- a/include/uapi/linux/pkt_sched.h 
-+++ b/include/uapi/linux/pkt_sched.h 
+--- a/include/uapi/linux/pkt_sched.h
++++ b/include/uapi/linux/pkt_sched.h
 @@ -119,6 +119,249 @@ enum {
  
  #define TCA_STAB_MAX (__TCA_STAB_MAX - 1)
@@ -2191,42 +2248,8 @@
  /* FIFO section */
  
  struct tc_fifo_qopt {
---- /dev/null
-+++ b/include/uapi/linux/tc_act/tc_nss_mirred.h
-@@ -0,0 +1,31 @@
-+#ifndef __LINUX_TC_NSS_MIRRED_H
-+#define __LINUX_TC_NSS_MIRRED_H
-+
-+#include <linux/pkt_cls.h>
-+
-+/*
-+ * Types of parameters for nss mirred action.
-+ */
-+enum {
-+	TC_NSS_MIRRED_UNSPEC,
-+	TC_NSS_MIRRED_TM,
-+	TC_NSS_MIRRED_PARMS,
-+	__TC_NSS_MIRRED_MAX
-+};
-+#define TC_NSS_MIRRED_MAX (__TC_NSS_MIRRED_MAX - 1)
-+
-+/*
-+ * tc_nss_mirred
-+ *	tc command structure for nss mirred action.
-+ */
-+struct tc_nss_mirred {
-+	tc_gen;			/* General tc structure. */
-+	__u32 from_ifindex;	/* ifindex of the port from which traffic
-+				 * will be redirected.
-+				 */
-+	__u32 to_ifindex;	/* ifindex of the port to which traffic
-+				 * will be redirected.
-+				 */
-+};
-+
-+#endif	/* __LINUX_TC_NSS_MIRRED_H */
---- a/net/bridge/br_fdb.c 
-+++ b/net/bridge/br_fdb.c 
+--- a/net/bridge/br_fdb.c
++++ b/net/bridge/br_fdb.c
 @@ -33,6 +33,20 @@ static const struct rhashtable_params br
  
  static struct kmem_cache *br_fdb_cache __read_mostly;
@@ -2351,11 +2374,10 @@
  		} else {
  			spin_lock_bh(&br->hash_lock);
 -			if (!hlist_unhashed(&f->fdb_node))
--				fdb_delete(br, f, true);
 +			if (!hlist_unhashed(&f->fdb_node)) {
 +				memset(&fdb_event, 0, sizeof(fdb_event));
 +				ether_addr_copy(fdb_event.addr, f->key.addr.addr);
-+				fdb_delete(br, f, true);
+ 				fdb_delete(br, f, true);
 +				atomic_notifier_call_chain(&br_fdb_update_notifier_list, 0,
 +						       (void *)&fdb_event);
 +			}
@@ -2412,8 +2434,8 @@
  			}
  
  			if (unlikely(test_bit(BR_FDB_ADDED_BY_USER, &flags)))
---- a/net/bridge/br_if.c 
-+++ b/net/bridge/br_if.c 
+--- a/net/bridge/br_if.c
++++ b/net/bridge/br_if.c
 @@ -1,5 +1,11 @@
  // SPDX-License-Identifier: GPL-2.0-or-later
  /*
@@ -2437,7 +2459,7 @@
  /*
   * Determine initial path cost based on speed.
   * using recommendations from 802.1d standard
-@@ -706,6 +716,7 @@ int br_add_if(struct net_bridge *br, struct net_device
+@@ -696,6 +706,7 @@ int br_add_if(struct net_bridge *br, str
  	br_set_gso_limits(br);
  
  	kobject_uevent(&p->kobj, KOBJ_ADD);
@@ -2445,7 +2467,7 @@
  
  	return 0;
  
-@@ -742,6 +753,8 @@ int br_del_if(struct net_bridge *br, struct net_device
+@@ -732,6 +743,8 @@ int br_del_if(struct net_bridge *br, str
  	if (!p || p->br != br)
  		return -EINVAL;
  
@@ -2454,7 +2476,7 @@
  	/* Since more than one interface can be attached to a bridge,
  	 * there still maybe an alternate path for netconsole to use;
  	 * therefore there is no reason for a NETDEV_RELEASE event.
-@@ -785,3 +798,83 @@ EXPORT_SYMBOL_GPL(br_port_flag_is_set);
+@@ -775,3 +788,83 @@ bool br_port_flag_is_set(const struct ne
  	return p->flags & flag;
  }
  EXPORT_SYMBOL_GPL(br_port_flag_is_set);
@@ -2538,9 +2560,9 @@
 +	u64_stats_update_end(&tstats->syncp);
 +}
 +EXPORT_SYMBOL_GPL(br_dev_update_stats);
---- a/net/core/dev.c 
-+++ b/net/core/dev.c 
-@@ -1690,7 +1690,7 @@ const char *netdev_cmd_to_name(enum netdev_cmd cmd)
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -1672,7 +1672,7 @@ const char *netdev_cmd_to_name(enum netd
  	N(SVLAN_FILTER_PUSH_INFO) N(SVLAN_FILTER_DROP_INFO)
  	N(PRE_CHANGEADDR) N(OFFLOAD_XSTATS_ENABLE) N(OFFLOAD_XSTATS_DISABLE)
  	N(OFFLOAD_XSTATS_REPORT_USED) N(OFFLOAD_XSTATS_REPORT_DELTA)
@@ -2549,35 +2571,35 @@
  	}
  #undef N
  	return "UNKNOWN_NETDEV_EVENT";
---- a/net/ipv4/ip_gre.c 
-+++ b/net/ipv4/ip_gre.c 
-@@ -665,6 +665,8 @@ static netdev_tx_t ipgre_xmit(struct sk_buff *skb,
- 
+--- a/net/ipv4/ip_gre.c
++++ b/net/ipv4/ip_gre.c
+@@ -667,6 +667,8 @@ static netdev_tx_t ipgre_xmit(struct sk_
  	if (gre_handle_offloads(skb, !!(tunnel->parms.o_flags & TUNNEL_CSUM)))
  		goto free_skb;
-+
-+	skb->skb_iif = dev->ifindex;
  
++	skb->skb_iif = dev->ifindex;
++
  	__gre_xmit(skb, dev, tnl_params, skb->protocol);
  	return NETDEV_TX_OK;
-@@ -747,6 +749,8 @@ static netdev_tx_t gre_tap_xmit(struct sk_buff *skb,
  
+@@ -750,6 +752,8 @@ static netdev_tx_t gre_tap_xmit(struct s
  	if (skb_cow_head(skb, dev->needed_headroom))
  		goto free_skb;
-+
-+	skb->skb_iif = dev->ifindex;
  
++	skb->skb_iif = dev->ifindex;
++
  	__gre_xmit(skb, dev, &tunnel->parms.iph, htons(ETH_P_TEB));
  	return NETDEV_TX_OK;
-@@ -828,7 +832,6 @@ static int ipgre_tunnel_ctl(struct net_device *dev, st
- /* Nice toy. Unfortunately, useless in real life :-)
+ 
+@@ -828,7 +832,6 @@ static int ipgre_tunnel_ctl(struct net_d
     It allows to construct virtual multiprotocol broadcast "LAN"
     over the Internet, provided multicast routing is tuned.
--
  
+-
     I have no idea was this bicycle invented before me,
     so that I had to set ARPHRD_IPGRE to a random value.
-@@ -1341,6 +1344,7 @@ static void ipgre_tap_setup(struct net_device *dev)
+    I have an impression, that Cisco could make something similar,
+@@ -1337,6 +1340,7 @@ static void ipgre_tap_setup(struct net_d
  	dev->netdev_ops	= &gre_tap_netdev_ops;
  	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
  	dev->priv_flags	|= IFF_LIVE_ADDR_CHANGE;
@@ -2585,27 +2607,25 @@
  	ip_tunnel_setup(dev, gre_tap_net_id);
  }
  
---- a/net/ipv4/ip_tunnel_core.c 
-+++ b/net/ipv4/ip_tunnel_core.c 
-@@ -55,8 +55,13 @@ void iptunnel_xmit(struct sock *sk, struct rtable *rt,
+--- a/net/ipv4/ip_tunnel_core.c
++++ b/net/ipv4/ip_tunnel_core.c
+@@ -55,7 +55,12 @@ void iptunnel_xmit(struct sock *sk, stru
  	struct net *net = dev_net(rt->dst.dev);
  	struct net_device *dev = skb->dev;
  	struct iphdr *iph;
 +	struct net_device *in_dev = NULL;
  	int err;
 +	int skb_iif;
- 
++
 +	/* Save input interface index */
 +	skb_iif = skb->skb_iif;
-+
+ 
  	skb_scrub_packet(skb, xnet);
  
- 	skb_clear_hash_if_not_l4(skb);
-@@ -78,6 +83,15 @@ void iptunnel_xmit(struct sock *sk, struct rtable *rt,
- 	iph->saddr	=	src;
+@@ -79,6 +84,15 @@ void iptunnel_xmit(struct sock *sk, stru
  	iph->ttl	=	ttl;
  	__ip_select_ident(net, iph, skb_shinfo(skb)->gso_segs ?: 1);
-+
+ 
 +	/* Get input interface */
 +	if (skb_iif) {
 +		in_dev = __dev_get_by_index(&init_net, skb_iif);
@@ -2614,12 +2634,13 @@
 +	if (proto == IPPROTO_IPV6 || proto == IPPROTO_GRE || netif_is_vxlan(in_dev)) {
 +		skb->skb_iif = skb_iif;
 +	}
- 
++
  	err = ip_local_out(net, sk, skb);
  
---- a/net/ipv6/ip6_gre.c 
-+++ b/net/ipv6/ip6_gre.c 
-@@ -1940,6 +1940,7 @@ static void ip6gre_tap_setup(struct net_device *dev)
+ 	if (dev) {
+--- a/net/ipv6/ip6_gre.c
++++ b/net/ipv6/ip6_gre.c
+@@ -1941,6 +1941,7 @@ static void ip6gre_tap_setup(struct net_
  
  	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
  	dev->priv_flags |= IFF_LIVE_ADDR_CHANGE;
@@ -2627,9 +2648,9 @@
  	netif_keep_dst(dev);
  }
  
---- a/net/ipv6/ip6_tunnel.c 
-+++ b/net/ipv6/ip6_tunnel.c 
-@@ -100,6 +100,24 @@ static inline int ip6_tnl_mpls_supported(void)
+--- a/net/ipv6/ip6_tunnel.c
++++ b/net/ipv6/ip6_tunnel.c
+@@ -100,6 +100,24 @@ static inline int ip6_tnl_mpls_supported
  #define for_each_ip6_tunnel_rcu(start) \
  	for (t = rcu_dereference(start); t; t = rcu_dereference(t->next))
  
@@ -2654,17 +2675,17 @@
  /**
   * ip6_tnl_lookup - fetch tunnel matching the end-point addresses
   *   @net: network namespace
-@@ -1025,6 +1043,9 @@ static int __ip6_tnl_rcv(struct ip6_tnl *tunnel, struc
- 
+@@ -1024,6 +1042,9 @@ static int __ip6_tnl_rcv(struct ip6_tnl
  	if (tun_dst)
  		skb_dst_set(skb, (struct dst_entry *)tun_dst);
-+
+ 
 +	/* Reset the skb_iif to Tunnels interface index */
 +	skb->skb_iif = tunnel->dev->ifindex;
- 
++
  	gro_cells_receive(&tunnel->gro_cells, skb);
  	return 0;
-@@ -1107,7 +1128,6 @@ static int ipxip6_rcv(struct sk_buff *skb, u8 ipproto,
+ 
+@@ -1105,7 +1126,6 @@ static int ipxip6_rcv(struct sk_buff *sk
  	rcu_read_unlock();
  
  	return ret;
@@ -2672,7 +2693,7 @@
  drop:
  	rcu_read_unlock();
  	kfree_skb(skb);
-@@ -1416,6 +1436,9 @@ route_lookup:
+@@ -1424,6 +1444,9 @@ route_lookup:
  	ipv6h->nexthdr = proto;
  	ipv6h->saddr = fl6->saddr;
  	ipv6h->daddr = fl6->daddr;
@@ -2682,9 +2703,9 @@
  	ip6tunnel_xmit(NULL, skb, dev);
  	return 0;
  tx_err_link_failure:
---- a/net/ipv6/ndisc.c 
-+++ b/net/ipv6/ndisc.c 
-@@ -650,6 +650,7 @@ void ndisc_send_ns(struct net_device *dev, const struc
+--- a/net/ipv6/ndisc.c
++++ b/net/ipv6/ndisc.c
+@@ -666,6 +666,7 @@ void ndisc_send_ns(struct net_device *de
  	if (skb)
  		ndisc_send_skb(skb, daddr, saddr);
  }
@@ -2692,9 +2713,9 @@
  
  void ndisc_send_rs(struct net_device *dev, const struct in6_addr *saddr,
  		   const struct in6_addr *daddr)
---- a/net/ipv6/sit.c 
-+++ b/net/ipv6/sit.c 
-@@ -90,6 +90,21 @@ static inline struct sit_net *dev_to_sit_net(struct ne
+--- a/net/ipv6/sit.c
++++ b/net/ipv6/sit.c
+@@ -90,6 +90,21 @@ static inline struct sit_net *dev_to_sit
  	return net_generic(t->net, sit_net_id);
  }
  
@@ -2716,7 +2737,7 @@
  /*
   * Must be invoked with rcu_read_lock
   */
-@@ -728,6 +743,8 @@ static int ipip6_rcv(struct sk_buff *skb)
+@@ -722,6 +737,8 @@ static int ipip6_rcv(struct sk_buff *skb
  
  		dev_sw_netstats_rx_add(tunnel->dev, skb->len);
  
@@ -2725,7 +2746,7 @@
  		netif_rx(skb);
  
  		return 0;
-@@ -1037,6 +1054,8 @@ static netdev_tx_t ipip6_tunnel_xmit(struct sk_buff *s
+@@ -1031,6 +1048,8 @@ static netdev_tx_t ipip6_tunnel_xmit(str
  
  	skb_set_inner_ipproto(skb, IPPROTO_IPV6);
  
@@ -2734,13 +2755,12 @@
  	iptunnel_xmit(NULL, rt, skb, fl4.saddr, fl4.daddr, protocol, tos, ttl,
  		      df, !net_eq(tunnel->net, dev_net(dev)));
  	return NETDEV_TX_OK;
---- a/net/l2tp/l2tp_core.c 
-+++ b/net/l2tp/l2tp_core.c 
-@@ -397,7 +397,31 @@ EXPORT_SYMBOL_GPL(l2tp_session_register);
- 	return err;
+--- a/net/l2tp/l2tp_core.c
++++ b/net/l2tp/l2tp_core.c
+@@ -398,6 +398,30 @@ err_tlock:
  }
  EXPORT_SYMBOL_GPL(l2tp_session_register);
-+
+ 
 +void l2tp_stats_update(struct l2tp_tunnel *tunnel,
 +		       struct l2tp_session *session,
 +		       struct l2tp_stats *stats)
@@ -2753,7 +2773,7 @@
 +			&tunnel->stats.tx_packets);
 +	atomic_long_add(atomic_long_read(&stats->tx_bytes),
 +			&tunnel->stats.tx_bytes);
- 
++
 +	atomic_long_add(atomic_long_read(&stats->rx_packets),
 +			&session->stats.rx_packets);
 +	atomic_long_add(atomic_long_read(&stats->rx_bytes),
@@ -2768,9 +2788,9 @@
  /*****************************************************************************
   * Receive data handling
   *****************************************************************************/
---- a/net/l2tp/l2tp_core.h 
-+++ b/net/l2tp/l2tp_core.h 
-@@ -231,6 +231,8 @@ struct l2tp_session *l2tp_session_get_by_ifname(const 
+--- a/net/l2tp/l2tp_core.h
++++ b/net/l2tp/l2tp_core.h
+@@ -231,6 +231,8 @@ struct l2tp_session *l2tp_session_get(co
  struct l2tp_session *l2tp_session_get_nth(struct l2tp_tunnel *tunnel, int nth);
  struct l2tp_session *l2tp_session_get_by_ifname(const struct net *net,
  						const char *ifname);
@@ -2779,9 +2799,9 @@
  
  /* Tunnel and session lifetime management.
   * Creation of a new instance is a two-step process: create, then register.
---- a/net/netfilter/Kconfig 
-+++ b/net/netfilter/Kconfig 
-@@ -160,6 +160,13 @@ config NF_CONNTRACK_TIMESTAMP
+--- a/net/netfilter/Kconfig
++++ b/net/netfilter/Kconfig
+@@ -174,6 +174,13 @@ config NF_CONNTRACK_TIMEOUT
  
  	  If unsure, say `N'.
  
@@ -2795,39 +2815,9 @@
  config NF_CONNTRACK_TIMESTAMP
  	bool  'Connection tracking timestamping'
  	depends on NETFILTER_ADVANCED
---- a/net/netfilter/nf_conntrack_extend.c
-+++ b/net/netfilter/nf_conntrack_extend.c
-@@ -23,6 +23,7 @@
- #include <net/netfilter/nf_conntrack_labels.h>
- #include <net/netfilter/nf_conntrack_synproxy.h>
- #include <net/netfilter/nf_conntrack_act_ct.h>
-+#include <net/netfilter/nf_conntrack_dscpremark_ext.h>
- #include <net/netfilter/nf_nat.h>
- 
- #define NF_CT_EXT_PREALLOC	128u /* conntrack events are on by default */
-@@ -54,6 +55,9 @@ static const u8 nf_ct_ext_type_len[NF_CT
- #if IS_ENABLED(CONFIG_NET_ACT_CT)
- 	[NF_CT_EXT_ACT_CT] = sizeof(struct nf_conn_act_ct_ext),
- #endif
-+#ifdef CONFIG_NF_CONNTRACK_DSCPREMARK_EXT
-+	[NF_CT_EXT_DSCPREMARK] = sizeof(struct nf_ct_dscpremark_ext),
-+#endif
- };
- 
- static __always_inline unsigned int total_extension_size(void)
-@@ -86,6 +90,9 @@ static __always_inline unsigned int tota
- #if IS_ENABLED(CONFIG_NET_ACT_CT)
- 		+ sizeof(struct nf_conn_act_ct_ext)
- #endif
-+#ifdef CONFIG_NF_CONNTRACK_DSCPREMARK_EXT
-+	    + sizeof(struct nf_ct_dscpremark_ext)
-+#endif
- 	;
- }
- 
---- a/net/netfilter/Makefile 
-+++ b/net/netfilter/Makefile 
-@@ -14,6 +14,7 @@ nf_conntrack-$(CONFIG_NF_CT_PROTO_GRE) += nf_conntrack
+--- a/net/netfilter/Makefile
++++ b/net/netfilter/Makefile
+@@ -15,6 +15,7 @@ nf_conntrack-$(CONFIG_NF_CONNTRACK_OVS)
  nf_conntrack-$(CONFIG_NF_CT_PROTO_DCCP) += nf_conntrack_proto_dccp.o
  nf_conntrack-$(CONFIG_NF_CT_PROTO_SCTP) += nf_conntrack_proto_sctp.o
  nf_conntrack-$(CONFIG_NF_CT_PROTO_GRE) += nf_conntrack_proto_gre.o
@@ -2835,8 +2825,8 @@
  ifeq ($(CONFIG_NF_CONNTRACK),m)
  nf_conntrack-$(CONFIG_DEBUG_INFO_BTF_MODULES) += nf_conntrack_bpf.o
  else ifeq ($(CONFIG_NF_CONNTRACK),y)
---- a/net/netfilter/nf_conntrack_core.c 
-+++ b/net/netfilter/nf_conntrack_core.c 
+--- a/net/netfilter/nf_conntrack_core.c
++++ b/net/netfilter/nf_conntrack_core.c
 @@ -45,6 +45,9 @@
  #include <net/netfilter/nf_conntrack_zones.h>
  #include <net/netfilter/nf_conntrack_timestamp.h>
@@ -2857,8 +2847,8 @@
  
  #ifdef CONFIG_NF_CONNTRACK_EVENTS
  	ecache = tmpl ? nf_ct_ecache_find(tmpl) : NULL;
---- a/net/netfilter/xt_DSCP.c 
-+++ b/net/netfilter/xt_DSCP.c 
+--- a/net/netfilter/xt_DSCP.c
++++ b/net/netfilter/xt_DSCP.c
 @@ -15,6 +15,9 @@
  
  #include <linux/netfilter/x_tables.h>

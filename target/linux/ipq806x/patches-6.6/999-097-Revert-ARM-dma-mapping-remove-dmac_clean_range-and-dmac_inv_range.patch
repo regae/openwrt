@@ -34,8 +34,6 @@ Signed-off-by: Pavithra R <quic_pavir@quicinc.com>
  arch/arm/mm/proc-syms.c           |  3 +++
  5 files changed, 33 insertions(+), 3 deletions(-)
 
-diff --git a/arch/arm/include/asm/cacheflush.h b/arch/arm/include/asm/cacheflush.h
-index a094f964c8692..49c4145463e2a 100644
 --- a/arch/arm/include/asm/cacheflush.h
 +++ b/arch/arm/include/asm/cacheflush.h
 @@ -91,6 +91,21 @@
@@ -87,8 +85,6 @@ index a094f964c8692..49c4145463e2a 100644
  extern void dmac_flush_range(const void *, const void *);
  
  #endif
-diff --git a/arch/arm/include/asm/glue-cache.h b/arch/arm/include/asm/glue-cache.h
-index 724f8dac1e5b1..89a7ee6822d9b 100644
 --- a/arch/arm/include/asm/glue-cache.h
 +++ b/arch/arm/include/asm/glue-cache.h
 @@ -156,6 +156,8 @@ static inline void nop_dma_unmap_area(co
@@ -100,8 +96,6 @@ index 724f8dac1e5b1..89a7ee6822d9b 100644
  #endif
  
  #endif
-diff --git a/arch/arm/mm/cache-v7.S b/arch/arm/mm/cache-v7.S
-index 7c9499b728c44..46f1ef256ca62 100644
 --- a/arch/arm/mm/cache-v7.S
 +++ b/arch/arm/mm/cache-v7.S
 @@ -361,7 +361,7 @@ ENDPROC(v7_flush_kern_dcache_area)
@@ -131,8 +125,6 @@ index 7c9499b728c44..46f1ef256ca62 100644
  	globl_equ	b15_dma_flush_range,		v7_dma_flush_range
  
  	define_cache_functions b15
-diff --git a/arch/arm/mm/proc-macros.S b/arch/arm/mm/proc-macros.S
-index fa6999e24b074..16b362af4a01e 100644
 --- a/arch/arm/mm/proc-macros.S
 +++ b/arch/arm/mm/proc-macros.S
 @@ -334,6 +334,8 @@ ENTRY(\name\()_cache_fns)
@@ -144,8 +136,6 @@ index fa6999e24b074..16b362af4a01e 100644
  	.long	\name\()_dma_flush_range
  	.size	\name\()_cache_fns, . - \name\()_cache_fns
  .endm
-diff --git a/arch/arm/mm/proc-syms.c b/arch/arm/mm/proc-syms.c
-index e21249548e9fb..33e4a9b8f1ba3 100644
 --- a/arch/arm/mm/proc-syms.c
 +++ b/arch/arm/mm/proc-syms.c
 @@ -27,6 +27,9 @@ EXPORT_SYMBOL(__cpuc_flush_user_all);
@@ -158,5 +148,3 @@ index e21249548e9fb..33e4a9b8f1ba3 100644
  #else
  EXPORT_SYMBOL(cpu_cache);
  #endif
--- 
-GitLab

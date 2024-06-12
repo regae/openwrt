@@ -1,6 +1,6 @@
 --- a/net/bridge/br_device.c
 +++ b/net/bridge/br_device.c
-@@ -37,6 +37,8 @@ netdev_tx_t br_dev_xmit(struct sk_buff *skb, struct ne
+@@ -37,6 +37,8 @@ netdev_tx_t br_dev_xmit(struct sk_buff *
  	struct net_bridge_vlan *vlan;
  	const unsigned char *dest;
  	u16 vid = 0;
@@ -9,7 +9,7 @@
  
  	memset(skb->cb, 0, sizeof(struct br_input_skb_cb));
  	br_tc_skb_miss_set(skb, false);
-@@ -79,10 +81,17 @@ netdev_tx_t br_dev_xmit(struct sk_buff *skb, struct ne
+@@ -79,10 +81,17 @@ netdev_tx_t br_dev_xmit(struct sk_buff *
  				br_do_suppress_nd(skb, br, vid, NULL, msg);
  	}
  
@@ -27,7 +27,7 @@
  		if (unlikely(netpoll_tx_running(dev))) {
  			br_flood(br, skb, BR_PKT_MULTICAST, false, true, vid);
  			goto out;
-@@ -98,11 +107,21 @@ netdev_tx_t br_dev_xmit(struct sk_buff *skb, struct ne
+@@ -98,11 +107,21 @@ netdev_tx_t br_dev_xmit(struct sk_buff *
  			br_multicast_flood(mdst, skb, brmctx, false, true);
  		else
  			br_flood(br, skb, BR_PKT_MULTICAST, false, true, vid);
@@ -54,7 +54,7 @@
  	return NETDEV_TX_OK;
 --- a/include/linux/if_bridge.h
 +++ b/include/linux/if_bridge.h
-@@ -62,6 +62,8 @@ struct net_bridge;
+@@ -65,6 +65,8 @@ struct br_ip_list {
  
  #define BR_DEFAULT_AGEING_TIME	(300 * HZ)
  
@@ -63,7 +63,7 @@
  struct net_bridge;
  void brioctl_set(int (*hook)(struct net *net, struct net_bridge *br,
  			     unsigned int cmd, struct ifreq *ifr,
-@@ -227,4 +229,16 @@ extern struct net_device *br_fdb_bridge_dev_get_and_ho
+@@ -249,4 +251,16 @@ struct br_fdb_event {
  extern void br_fdb_register_notify(struct notifier_block *nb);
  extern void br_fdb_unregister_notify(struct notifier_block *nb);
  extern struct net_device *br_fdb_bridge_dev_get_and_hold(struct net_bridge *br);
@@ -82,20 +82,20 @@
  #endif
 --- a/net/bridge/br.c
 +++ b/net/bridge/br.c
-@@ -454,6 +454,10 @@ static void __exit br_deinit(void)
- #endif
+@@ -472,6 +472,10 @@ static void __exit br_deinit(void)
  	br_fdb_fini();
  }
-+
+ 
 +/* Hook for bridge event notifications */
 +br_notify_hook_t __rcu *br_notify_hook __read_mostly;
 +EXPORT_SYMBOL_GPL(br_notify_hook);
- 
++
  module_init(br_init)
  module_exit(br_deinit)
+ MODULE_LICENSE("GPL");
 --- a/net/bridge/br_fdb.c
 +++ b/net/bridge/br_fdb.c
-@@ -295,6 +295,8 @@ static void fdb_notify(struct net_bridge
+@@ -239,6 +239,8 @@ static void fdb_notify(struct net_bridge
  	}
  	rtnl_notify(skb, net, 0, RTNLGRP_NEIGH, NULL, GFP_ATOMIC);
  	return;
@@ -114,7 +114,7 @@
   * added to the bridge private HW address list and all required ports
 --- a/net/bridge/br_input.c
 +++ b/net/bridge/br_input.c
-@@ -30,7 +30,15 @@ static int br_pass_frame_up(struct sk_buff *skb, bool 
+@@ -30,7 +30,15 @@ br_netif_receive_skb(struct net *net, st
  	return netif_receive_skb(skb);
  }
  
@@ -131,7 +131,7 @@
  {
  	struct net_device *indev, *brdev = BR_INPUT_SKB_CB(skb)->brdev;
  	struct net_bridge *br = netdev_priv(brdev);
-@@ -71,6 +79,7 @@ static int br_pass_frame_up(struct sk_buff *skb, bool 
+@@ -71,6 +79,7 @@ static int br_pass_frame_up(struct sk_bu
  		       dev_net(indev), NULL, skb, indev, NULL,
  		       br_netif_receive_skb);
  }
@@ -139,7 +139,7 @@
  
  /* note: already called with rcu_read_lock */
  int br_handle_frame_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
-@@ -85,6 +94,9 @@ int br_handle_frame_finish(struct net *net, struct soc
+@@ -85,6 +94,9 @@ int br_handle_frame_finish(struct net *n
  	struct net_bridge_vlan *vlan;
  	struct net_bridge *br;
  	bool promisc;
@@ -149,7 +149,7 @@
  	u16 vid = 0;
  	u8 state;
  
-@@ -145,6 +157,10 @@ int br_handle_frame_finish(struct net *net, struct soc
+@@ -180,6 +192,10 @@ int br_handle_frame_finish(struct net *n
  
  	switch (pkt_type) {
  	case BR_PKT_MULTICAST:
@@ -160,7 +160,7 @@
  		mdst = br_mdb_get(brmctx, skb, vid);
  		if ((mdst || BR_INPUT_SKB_CB_MROUTERS_ONLY(skb)) &&
  		    br_multicast_querier_exists(brmctx, eth_hdr(skb), mdst)) {
-@@ -160,7 +176,13 @@ int br_handle_frame_finish(struct net *net, struct soc
+@@ -195,7 +211,13 @@ int br_handle_frame_finish(struct net *n
  		}
  		break;
  	case BR_PKT_UNICAST:
@@ -175,7 +175,7 @@
  		break;
  	default:
  		break;
-@@ -176,12 +198,18 @@ int br_handle_frame_finish(struct net *net, struct soc
+@@ -211,12 +233,18 @@ int br_handle_frame_finish(struct net *n
  			dst->used = now;
  		br_forward(dst->dst, skb, local_rcv, false);
  	} else {
@@ -196,7 +196,7 @@
  
 --- a/net/bridge/br_netlink.c
 +++ b/net/bridge/br_netlink.c
-@@ -609,6 +609,8 @@ void br_info_notify(int event, const struct net_bridge
+@@ -657,6 +657,8 @@ void br_info_notify(int event, const str
  		kfree_skb(skb);
  		goto errout;
  	}
@@ -207,7 +207,7 @@
  errout:
 --- a/net/bridge/br_private.h
 +++ b/net/bridge/br_private.h
-@@ -18,6 +18,7 @@
+@@ -19,6 +19,7 @@
  #include <linux/if_vlan.h>
  #include <linux/rhashtable.h>
  #include <linux/refcount.h>
@@ -215,7 +215,7 @@
  
  #define BR_HASH_BITS 8
  #define BR_HASH_SIZE (1 << BR_HASH_BITS)
-@@ -834,6 +835,7 @@ int br_handle_frame_finish(struct net *net, struct soc
+@@ -907,6 +908,7 @@ void br_manage_promisc(struct net_bridge
  int nbp_backup_change(struct net_bridge_port *p, struct net_device *backup_dev);
  
  /* br_input.c */
@@ -223,7 +223,7 @@
  int br_handle_frame_finish(struct net *net, struct sock *sk, struct sk_buff *skb);
  rx_handler_func_t *br_get_rx_handler(const struct net_device *dev);
  
-@@ -2101,4 +2103,16 @@ struct nd_msg *br_is_nd_neigh_msg(struct sk_buff *skb,
+@@ -2267,4 +2269,16 @@ void br_do_suppress_nd(struct sk_buff *s
  		       u16 vid, struct net_bridge_port *p, struct nd_msg *msg);
  struct nd_msg *br_is_nd_neigh_msg(struct sk_buff *skb, struct nd_msg *m);
  bool br_is_neigh_suppress_enabled(const struct net_bridge_port *p, u16 vid);

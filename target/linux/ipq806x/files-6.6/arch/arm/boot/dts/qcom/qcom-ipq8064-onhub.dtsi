@@ -21,6 +21,12 @@
 		bootargs-append = " coherent_pool=2M";
 	};
 
+	/delete-node/ memory;
+	memory {
+		device_type = "memory";
+		linux,usable-memory = <0x42000000 0x3e000000>;
+	};
+
 	reserved-memory {
 		#address-cells = <1>;
 		#size-cells = <1>;
@@ -353,7 +359,7 @@
 	status = "okay";
 	qcom,mode = <GSBI_PROT_SPI>;
 
-	spi4: spi@1a280000 {
+	spi5: spi@1a280000 {
 		status = "okay";
 		spi-max-frequency = <50000000>;
 		pinctrl-0 = <&spi_pins>;

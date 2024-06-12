@@ -1,0 +1,504 @@
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -986,12 +986,16 @@ struct sk_buff {
+ #if IS_ENABLED(CONFIG_IP_SCTP)
+ 	__u8			csum_not_inet:1;
+ #endif
++	__u8			fast_forwarded:1;
+ 	/* Flag to check if skb is allocated from recycler */
+ 	__u8			is_from_recycler:1;
+ 	/* Flag for fast recycle in fast xmit path */
+ 	__u8			fast_recycled:1;
+ 	/* Flag for recycle in PPE DS */
+ 	__u8			recycled_for_ds:1;
++	/* 1 or 3 bit hole */
++	__u8			fast_qdisc:1;
++	/* Packets processed in dev_fast_xmit_qdisc() path */
+ 
+ #if defined(CONFIG_NET_SCHED) || defined(CONFIG_NET_XGRESS)
+ 	__u16			tc_index;	/* traffic control index */
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -2071,6 +2071,9 @@ static int call_netdevice_notifiers_mtu(
+ 	return call_netdevice_notifiers_info(val, &info.info);
+ }
+ 
++bool fast_tc_filter = false;
++EXPORT_SYMBOL_GPL(fast_tc_filter);
++
+ #ifdef CONFIG_NET_INGRESS
+ static DEFINE_STATIC_KEY_FALSE(ingress_needed_key);
+ 
+@@ -3569,8 +3572,13 @@ static int xmit_one(struct sk_buff *skb,
+ 	unsigned int len;
+ 	int rc;
+ 
+-	if (dev_nit_active(dev))
+-		dev_queue_xmit_nit(skb, dev);
++	/* If this skb has been fast forwarded then we don't want it to
++	 * go to any taps (by definition we're trying to bypass them).
++	 */
++	if (unlikely(!skb->fast_forwarded)) {
++		if (dev_nit_active(dev))
++			dev_queue_xmit_nit(skb, dev);
++	}
+ 
+ #ifdef CONFIG_ETHERNET_PACKET_MANGLE
+ 	if (dev->eth_mangle_tx && !(skb = dev->eth_mangle_tx(dev, skb)))
+@@ -3593,7 +3601,6 @@ struct sk_buff *dev_hard_start_xmit(stru
+ 
+ 	while (skb) {
+ 		struct sk_buff *next = skb->next;
+-
+ 		skb_mark_not_on_list(skb);
+ 		rc = xmit_one(skb, dev, txq, next != NULL);
+ 		if (unlikely(!dev_xmit_complete(rc))) {
+@@ -3780,6 +3787,60 @@ static int dev_qdisc_enqueue(struct sk_b
+ 	return rc;
+ }
+ 
++static inline int __dev_xmit_skb_qdisc(struct sk_buff *skb, struct Qdisc *q,
++				 struct net_device *top_qdisc_dev,
++				 struct netdev_queue *top_txq)
++{
++	spinlock_t *root_lock = qdisc_lock(q);
++	struct sk_buff *to_free = NULL;
++	bool contended;
++	int rc;
++
++	qdisc_calculate_pkt_len(skb, q);
++
++	if (q->flags & TCQ_F_NOLOCK) {
++		rc = q->enqueue(skb, q, &to_free) & NET_XMIT_MASK;
++		if (likely(!netif_xmit_frozen_or_stopped(top_txq)))
++			qdisc_run(q);
++
++		if (unlikely(to_free))
++			kfree_skb_list(to_free);
++		return rc;
++	}
++
++	/*
++	 * Heuristic to force contended enqueues to serialize on a
++	 * separate lock before trying to get qdisc main lock.
++	 * This permits qdisc->running owner to get the lock more
++	 * often and dequeue packets faster.
++	 */
++	contended = qdisc_is_running(q);
++	if (unlikely(contended))
++		spin_lock(&q->busylock);
++
++	spin_lock(root_lock);
++	if (unlikely(test_bit(__QDISC_STATE_DEACTIVATED, &q->state))) {
++		__qdisc_drop(skb, &to_free);
++		rc = NET_XMIT_DROP;
++	} else {
++		rc = q->enqueue(skb, q, &to_free) & NET_XMIT_MASK;
++		if (qdisc_run_begin(q)) {
++			if (unlikely(contended)) {
++				spin_unlock(&q->busylock);
++				contended = false;
++			}
++			__qdisc_run(q);
++			qdisc_run_end(q);
++		}
++	}
++	spin_unlock(root_lock);
++	if (unlikely(to_free))
++		kfree_skb_list(to_free);
++	if (unlikely(contended))
++		spin_unlock(&q->busylock);
++	return rc;
++}
++
+ static inline int __dev_xmit_skb(struct sk_buff *skb, struct Qdisc *q,
+ 				 struct net_device *dev,
+ 				 struct netdev_queue *txq)
+@@ -4262,6 +4323,148 @@ struct netdev_queue *netdev_core_pick_tx
+ 	return netdev_get_tx_queue(dev, queue_index);
+ }
+ 
++/**ss
++ *	dev_fast_xmit_qdisc - fast xmit the skb along with qdisc processing
++ *	@skb:buffer to transmit
++ *	@top_qdisc_dev: the top device on which qdisc is enabled.
++ *	@bottom_dev: the device on which transmission should happen after qdisc processing.
++ *	sucessful return true
++ *	failed return false
++ */
++bool dev_fast_xmit_qdisc(struct sk_buff *skb, struct net_device *top_qdisc_dev, struct net_device *bottom_dev)
++{
++        struct netdev_queue *txq;
++	struct Qdisc *q;
++	int rc = -ENOMEM;
++
++	if (unlikely(!(top_qdisc_dev->flags & IFF_UP))) {
++		return false;
++	}
++
++	skb_reset_mac_header(skb);
++
++	/* Disable soft irqs for various locks below. Also
++	 * stops preemption for RCU.
++	 */
++	rcu_read_lock_bh();
++
++	txq = netdev_core_pick_tx(top_qdisc_dev, skb, NULL);
++	q = rcu_dereference_bh(txq->qdisc);
++	if (unlikely(!q->enqueue)) {
++		rcu_read_unlock_bh();
++		return false;
++	}
++
++	skb_update_prio(skb);
++
++	qdisc_pkt_len_init(skb);
++#ifdef CONFIG_NET_CLS_ACT
++	skb->tc_at_ingress = 0;
++#ifdef CONFIG_NET_EGRESS
++	if (static_branch_unlikely(&egress_needed_key)) {
++		skb = sch_handle_egress(skb, &rc, top_qdisc_dev);
++		if (!skb) {
++			rcu_read_unlock_bh();
++			return true;
++		}
++	}
++#endif
++#endif
++	/* If device/qdisc don't need skb->dst, release it right now while
++	 * its hot in this cpu cache.
++	 * TODO: do we need this ?
++	 */
++	if (top_qdisc_dev->priv_flags & IFF_XMIT_DST_RELEASE)
++		skb_dst_drop(skb);
++	else
++		skb_dst_force(skb);
++
++	trace_net_dev_queue(skb);
++
++	/* Update the dev so that we can transmit to bottom device after qdisc */
++	skb->dev = bottom_dev;
++	skb->fast_qdisc = 1;
++	rc = __dev_xmit_skb_qdisc(skb, q, top_qdisc_dev, txq);
++
++	rcu_read_unlock_bh();
++	return true;
++}
++EXPORT_SYMBOL(dev_fast_xmit_qdisc);
++
++/**
++ *	dev_fast_xmit - fast xmit the skb
++ *	@skb:buffer to transmit
++ *	@dev: the device to be transmited to
++ *	@features: the skb features could bed used
++ *	sucessful return true
++ *	failed return false
++ */
++bool dev_fast_xmit(struct sk_buff *skb,
++		struct net_device *dev,
++		netdev_features_t features)
++{
++	struct netdev_queue *txq;
++	int cpu;
++	netdev_tx_t rc;
++
++	if (unlikely(!(dev->flags & IFF_UP))) {
++		return false;
++	}
++
++	if (unlikely(skb_needs_linearize(skb, features))) {
++		return false;
++	}
++
++	rcu_read_lock_bh();
++	cpu = smp_processor_id();
++
++	/* If device don't need the dst, release it now, otherwise make sure
++	 * the refcount increased.
++	 */
++	if (likely(dev->priv_flags & IFF_XMIT_DST_RELEASE)) {
++		skb_dst_drop(skb);
++	} else {
++		skb_dst_force(skb);
++	}
++
++	txq = netdev_core_pick_tx(dev, skb, NULL);
++
++	if (likely(txq->xmit_lock_owner != cpu)) {
++#define FAST_HARD_TX_LOCK(features, txq, cpu) {		\
++	if ((features & NETIF_F_LLTX) == 0) {		\
++		__netif_tx_lock(txq, cpu);		\
++	} else {					\
++		__netif_tx_acquire(txq);		\
++	}						\
++}
++
++#define FAST_HARD_TX_UNLOCK(features, txq) {		\
++	if ((features & NETIF_F_LLTX) == 0) {		\
++		__netif_tx_unlock(txq);			\
++	} else {					\
++		__netif_tx_release(txq);		\
++	}						\
++}
++		netdev_features_t dev_features = dev->features;
++		FAST_HARD_TX_LOCK(dev_features, txq, cpu);
++		if (likely(!netif_xmit_stopped(txq))) {
++			rc = netdev_start_xmit(skb, dev, txq, 0);
++			if (unlikely(!dev_xmit_complete(rc))) {
++				FAST_HARD_TX_UNLOCK(dev_features, txq);
++				goto fail;
++			}
++			FAST_HARD_TX_UNLOCK(dev_features, txq);
++			rcu_read_unlock_bh();
++			return true;
++		}
++		FAST_HARD_TX_UNLOCK(dev_features, txq);
++	}
++fail:
++	rcu_read_unlock_bh();
++	return false;
++}
++EXPORT_SYMBOL(dev_fast_xmit);
++
+ /**
+  * __dev_queue_xmit() - transmit a buffer
+  * @skb:	buffer to transmit
+@@ -5309,6 +5512,9 @@ void netdev_rx_handler_unregister(struct
+ }
+ EXPORT_SYMBOL_GPL(netdev_rx_handler_unregister);
+ 
++int (*athrs_fast_nat_recv)(struct sk_buff *skb) __rcu __read_mostly;
++EXPORT_SYMBOL_GPL(athrs_fast_nat_recv);
++
+ /*
+  * Limit the use of PFMEMALLOC reserves to those protocols that implement
+  * the special handling of PFMEMALLOC skbs.
+@@ -5356,6 +5562,7 @@ static int __netif_receive_skb_core(stru
+ 	bool deliver_exact = false;
+ 	int ret = NET_RX_DROP;
+ 	__be16 type;
++	int (*fast_recv)(struct sk_buff *skb);
+ 
+ 	net_timestamp_check(!READ_ONCE(netdev_tstamp_prequeue), skb);
+ 
+@@ -5394,6 +5601,16 @@ another_round:
+ 			goto out;
+ 	}
+ 
++	if (likely(!fast_tc_filter)) {
++		fast_recv = rcu_dereference(athrs_fast_nat_recv);
++		if (fast_recv) {
++			if (fast_recv(skb)) {
++				ret = NET_RX_SUCCESS;
++				goto out;
++			}
++		}
++	}
++
+ 	if (skb_skip_tc_classify(skb))
+ 		goto skip_classify;
+ 
+@@ -5432,6 +5649,7 @@ skip_taps:
+ #endif
+ 	skb_reset_redirect(skb);
+ skip_classify:
++
+ 	if (pfmemalloc && !skb_pfmemalloc_protocol(skb))
+ 		goto drop;
+ 
+@@ -5446,6 +5664,24 @@ skip_classify:
+ 			goto out;
+ 	}
+ 
++	if (unlikely(!fast_tc_filter)) {
++		goto skip_fast_recv;
++	}
++
++	fast_recv = rcu_dereference(athrs_fast_nat_recv);
++	if (fast_recv) {
++		if (pt_prev) {
++			ret = deliver_skb(skb, pt_prev, orig_dev);
++			pt_prev = NULL;
++		}
++
++		if (fast_recv(skb)) {
++			ret = NET_RX_SUCCESS;
++			goto out;
++		}
++	}
++skip_fast_recv:
++
+ 	rx_handler = rcu_dereference(skb->dev->rx_handler);
+ 	if (rx_handler) {
+ 		if (pt_prev) {
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -843,6 +843,7 @@ struct sk_buff *__netdev_alloc_skb_no_sk
+ 	skb = skb_recycler_alloc(dev, length);
+ 	if (likely(skb)) {
+ 		skb->fast_recycled = 0;
++		skb->fast_qdisc = 0;
+ 		return skb;
+ 	}
+ 
+@@ -2374,6 +2375,7 @@ int pskb_expand_head(struct sk_buff *skb
+ 	skb->is_from_recycler = 0;
+ 	skb->fast_recycled = 0;
+ 	skb->recycled_for_ds = 0;
++	skb->fast_qdisc = 0;
+ 
+ 	return 0;
+ 
+--- a/net/sched/sch_generic.c
++++ b/net/sched/sch_generic.c
+@@ -311,6 +311,68 @@ trace:
+  *				false  - hardware queue frozen backoff
+  *				true   - feel free to send more pkts
+  */
++bool sch_direct_xmit_fast(struct sk_buff *first, struct Qdisc *q, struct net_device *dev, spinlock_t *root_lock)
++{
++	struct sk_buff *skb = first;
++	int rc = NETDEV_TX_OK;
++	struct netdev_queue *txq;
++	int cpu;
++
++	if (unlikely(!(dev->flags & IFF_UP))) {
++		dev_kfree_skb_any(skb);
++		return true;
++	}
++
++	/*
++	 * If GSO is enabled then handle segmentation through dev_queue_xmit
++	 */
++	if (unlikely(skb_is_gso(skb))) {
++		if (root_lock)
++			spin_unlock(root_lock);
++		dev_queue_xmit(first);
++		if (root_lock)
++			spin_lock(root_lock);
++		return true;
++	}
++
++	cpu = smp_processor_id();
++
++	txq = netdev_core_pick_tx(dev, skb, NULL);
++
++	if (likely(txq->xmit_lock_owner != cpu)) {
++		HARD_TX_LOCK(dev, txq, smp_processor_id());
++		if (likely(!netif_xmit_stopped(txq))) {
++			rc = netdev_start_xmit(skb, dev, txq, 0);
++			if (unlikely(!dev_xmit_complete(rc))) {
++				HARD_TX_UNLOCK(dev, txq);
++				/*
++				 * If we dont able to enqueue this to bottom interface, then we
++				 * cannot requeue the packet back, as qdisc was enabled on different
++				 * interface and transmit interface is different
++				 */
++				dev_kfree_skb_any(skb);
++				return true;
++			}
++		} else {
++			dev_kfree_skb_any(skb);
++		}
++		HARD_TX_UNLOCK(dev, txq);
++	} else {
++		dev_kfree_skb_any(skb);
++	}
++
++	return true;
++}
++
++/*
++ * Transmit possibly several skbs, and handle the return status as
++ * required. Owning running seqcount bit guarantees that
++ * only one CPU can execute this function.
++ *
++ * Returns to the caller:
++ *				false  - hardware queue frozen backoff
++ *				true   - feel free to send more pkts
++ */
+ bool sch_direct_xmit(struct sk_buff *skb, struct Qdisc *q,
+ 		     struct net_device *dev, struct netdev_queue *txq,
+ 		     spinlock_t *root_lock, bool validate)
+@@ -401,10 +463,39 @@ static inline bool qdisc_restart(struct
+ 	if (!(q->flags & TCQ_F_NOLOCK))
+ 		root_lock = qdisc_lock(q);
+ 
+-	dev = qdisc_dev(q);
+-	txq = skb_get_tx_queue(dev, skb);
++	while (skb) {
++		struct sk_buff *next = skb->next;
++		skb->next = NULL;
++
++		if (likely(skb->fast_qdisc)) {
++			/*
++			 * For SFE fast_qdisc marked packets, we send packets directly
++			 * to physical interface pointed to by skb->dev
++			 * We can clear fast_qdisc since we will not re-enqueue packet in this
++			 * path
++			 */
++			skb->fast_qdisc = 0;
++			if (!sch_direct_xmit_fast(skb, q, skb->dev, root_lock)) {
++				return false;
++			}
++		} else {
++			dev = qdisc_dev(q);
++			txq = skb_get_tx_queue(dev, skb);
++
++			if (!sch_direct_xmit(skb, q, dev, txq, root_lock, validate)) {
++				if (next) {
++					skb = next;
++					dev_requeue_skb(skb, q);
++				}
++
++				return false;
++			}
++		}
+ 
+-	return sch_direct_xmit(skb, q, dev, txq, root_lock, validate);
++		skb = next;
++	}
++
++	return true;
+ }
+ 
+ void __qdisc_run(struct Qdisc *q)
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -3165,6 +3165,9 @@ u16 dev_pick_tx_cpu_id(struct net_device
+ u16 dev_pick_tx_cpu_id(struct net_device *dev, struct sk_buff *skb,
+ 		       struct net_device *sb_dev);
+ 
++bool dev_fast_xmit(struct sk_buff *skb, struct net_device *dev,
++		   netdev_features_t features);
++bool dev_fast_xmit_qdisc(struct sk_buff *skb, struct net_device *top_qdisc_dev, struct net_device *bottom_dev);
+ int __dev_queue_xmit(struct sk_buff *skb, struct net_device *sb_dev);
+ int __dev_direct_xmit(struct sk_buff *skb, u16 queue_id);
+ 
+--- a/include/net/gre.h
++++ b/include/net/gre.h
+@@ -43,12 +43,24 @@ static inline bool netif_is_gretap(const
+ 	       !strcmp(dev->rtnl_link_ops->kind, "gretap");
+ }
+ 
++static inline bool netif_is_gre(const struct net_device *dev)
++{
++	return dev->rtnl_link_ops &&
++	       !strcmp(dev->rtnl_link_ops->kind, "gre");
++}
++
+ static inline bool netif_is_ip6gretap(const struct net_device *dev)
+ {
+ 	return dev->rtnl_link_ops &&
+ 	       !strcmp(dev->rtnl_link_ops->kind, "ip6gretap");
+ }
+ 
++static inline bool netif_is_ip6gre(const struct net_device *dev)
++{
++	return dev->rtnl_link_ops &&
++	       !strcmp(dev->rtnl_link_ops->kind, "ip6gre");
++}
++
+ static inline int gre_calc_hlen(__be16 o_flags)
+ {
+ 	int addend = 4;

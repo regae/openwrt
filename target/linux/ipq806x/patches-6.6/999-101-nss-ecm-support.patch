@@ -1,6 +1,6 @@
 --- a/drivers/net/bonding/bond_main.c
 +++ b/drivers/net/bonding/bond_main.c
-@@ -3827,11 +3827,15 @@ static bool bond_flow_dissect_without_sk
+@@ -4130,11 +4130,15 @@ static bool bond_flow_dissect_without_sk
  	dst = (uint32_t *)pdst;
  
  	if (protocol == htons(ETH_P_IP)) {
@@ -18,7 +18,7 @@
  	}
 --- a/drivers/net/macvlan.c
 +++ b/drivers/net/macvlan.c
-@@ -930,6 +930,32 @@ static void macvlan_uninit(struct net_de
+@@ -960,6 +960,32 @@ static void macvlan_uninit(struct net_de
  		macvlan_port_destroy(port->dev);
  }
  
@@ -51,7 +51,7 @@
  static void macvlan_dev_get_stats64(struct net_device *dev,
  				    struct rtnl_link_stats64 *stats)
  {
-@@ -1465,6 +1491,7 @@ int macvlan_common_newlink(struct net *s
+@@ -1506,6 +1532,7 @@ int macvlan_common_newlink(struct net *s
  	vlan->dev      = dev;
  	vlan->port     = port;
  	vlan->set_features = MACVLAN_FEATURES;
@@ -69,7 +69,7 @@
  
  #include <linux/nsproxy.h>
  #include <net/net_namespace.h>
-@@ -2986,6 +2987,20 @@ char *ppp_dev_name(struct ppp_channel *c
+@@ -2987,6 +2988,20 @@ char *ppp_dev_name(struct ppp_channel *c
  	return name;
  }
  
@@ -90,7 +90,7 @@
  
  /*
   * Disconnect a channel from the generic layer.
-@@ -3486,6 +3501,8 @@ ppp_connect_channel(struct channel *pch,
+@@ -3487,6 +3502,8 @@ ppp_connect_channel(struct channel *pch,
  	struct ppp_net *pn;
  	int ret = -ENXIO;
  	int hdrlen;
@@ -99,7 +99,7 @@
  	int notify = 0;
  
  	pn = ppp_pernet(pch->chan_net);
-@@ -3519,6 +3536,30 @@ ppp_connect_channel(struct channel *pch,
+@@ -3520,6 +3537,30 @@ ppp_connect_channel(struct channel *pch,
  	++ppp->n_channels;
  	pch->ppp = ppp;
  	refcount_inc(&ppp->file.refcnt);
@@ -130,40 +130,7 @@
  	notify = 1;
  
  	ppp_unlock(ppp);
-@@ -3723,6 +3764,32 @@ int ppp_is_multilink(struct net_device *
- }
- EXPORT_SYMBOL(ppp_is_multilink);
- 
-+/* __ppp_is_multilink()
-+ *	Returns >0 if the device is a multilink PPP netdevice, 0 if not or < 0
-+ *	if the device is not PPP. Caller should acquire ppp_lock before calling
-+ *	this function
-+ */
-+int __ppp_is_multilink(struct net_device *dev)
-+{
-+	struct ppp *ppp;
-+	unsigned int flags;
-+
-+	if (!dev)
-+		return -1;
-+
-+	if (dev->type != ARPHRD_PPP)
-+		return -1;
-+
-+	ppp = netdev_priv(dev);
-+	flags = ppp->flags;
-+
-+	if (flags & SC_MULTILINK)
-+		return 1;
-+
-+	return 0;
-+}
-+EXPORT_SYMBOL(__ppp_is_multilink);
-+
- /* ppp_channel_get_protocol()
-  *	Call this to obtain the underlying protocol of the PPP channel,
-  *	e.g. PX_PROTO_OE
-@@ -3743,6 +3810,18 @@ int ppp_channel_get_protocol(struct ppp_
+@@ -3744,6 +3785,18 @@ int ppp_channel_get_protocol(struct ppp_
  }
  EXPORT_SYMBOL(ppp_channel_get_protocol);
  
@@ -182,67 +149,7 @@
  /* ppp_channel_hold()
   *	Call this to hold a channel.
   *
-@@ -3827,6 +3906,59 @@ int ppp_hold_channels(struct net_device
- }
- EXPORT_SYMBOL(ppp_hold_channels);
- 
-+/* __ppp_hold_channels()
-+ *	Returns the PPP channels of the PPP device, storing each one
-+ *	into channels[].
-+ *
-+ * channels[] has chan_sz elements.
-+ * This function returns the number of channels stored, up to chan_sz.
-+ * It will return < 0 if the device is not PPP.
-+ *
-+ * You MUST acquire ppp_lock and  release the channels using
-+ * ppp_release_channels().
-+ */
-+int __ppp_hold_channels(struct net_device *dev, struct ppp_channel *channels[],
-+			unsigned int chan_sz)
-+{
-+	struct ppp *ppp;
-+	int c;
-+	struct channel *pch;
-+
-+	if (!dev)
-+		return -1;
-+
-+	if (dev->type != ARPHRD_PPP)
-+		return -1;
-+
-+	ppp = netdev_priv(dev);
-+
-+	c = 0;
-+	list_for_each_entry(pch, &ppp->channels, clist) {
-+		struct ppp_channel *chan;
-+
-+		if (!pch->chan) {
-+			/* Channel is going / gone away*/
-+			continue;
-+		}
-+		if (c == chan_sz) {
-+			/* No space to record channel */
-+			return c;
-+		}
-+
-+		/* Hold the channel, if supported */
-+		chan = pch->chan;
-+		if (!chan->ops->hold)
-+			continue;
-+
-+		chan->ops->hold(chan);
-+
-+		/* Record the channel */
-+		channels[c++] = chan;
-+	}
-+	return c;
-+}
-+EXPORT_SYMBOL(__ppp_hold_channels);
-+
- /* ppp_release_channels()
-  *	Releases channels
-  */
-@@ -3843,6 +3975,28 @@ void ppp_release_channels(struct ppp_cha
+@@ -3844,6 +3897,28 @@ void ppp_release_channels(struct ppp_cha
  }
  EXPORT_SYMBOL(ppp_release_channels);
  
@@ -271,7 +178,7 @@
  /* Module/initialization stuff */
  
  module_init(ppp_init);
-@@ -3854,6 +4008,7 @@ EXPORT_SYMBOL(ppp_unregister_channel);
+@@ -3855,6 +3930,7 @@ EXPORT_SYMBOL(ppp_unregister_channel);
  EXPORT_SYMBOL(ppp_channel_index);
  EXPORT_SYMBOL(ppp_unit_number);
  EXPORT_SYMBOL(ppp_dev_name);
@@ -320,7 +227,7 @@
  static struct proto pptp_sk_proto __read_mostly = {
 --- a/include/linux/if_bridge.h
 +++ b/include/linux/if_bridge.h
-@@ -73,6 +73,7 @@ extern struct net_device *br_port_dev_ge
+@@ -76,6 +76,7 @@ extern struct net_device *br_port_dev_ge
  					  struct sk_buff *skb,
  					  unsigned int cookie);
  extern void br_refresh_fdb_entry(struct net_device *dev, const char *addr);
@@ -328,7 +235,7 @@
  extern void br_dev_update_stats(struct net_device *dev,
  				struct rtnl_link_stats64 *nlstats);
  extern struct net_bridge_fdb_entry *br_fdb_has_entry(struct net_device *dev,
-@@ -80,6 +81,7 @@ extern struct net_bridge_fdb_entry *br_f
+@@ -83,6 +84,7 @@ extern struct net_bridge_fdb_entry *br_f
  						     __u16 vid);
  extern void br_fdb_update_register_notify(struct notifier_block *nb);
  extern void br_fdb_update_unregister_notify(struct notifier_block *nb);
@@ -350,7 +257,7 @@
  struct macvlan_dev {
  	struct net_device	*dev;
  	struct list_head	list;
-@@ -34,6 +39,7 @@ struct macvlan_dev {
+@@ -35,6 +40,7 @@ struct macvlan_dev {
  #ifdef CONFIG_NET_POLL_CONTROLLER
  	struct netpoll		*netpoll;
  #endif
@@ -358,7 +265,7 @@
  };
  
  static inline void macvlan_count_rx(const struct macvlan_dev *vlan,
-@@ -67,6 +73,24 @@ extern void macvlan_dellink(struct net_d
+@@ -68,6 +74,24 @@ extern void macvlan_dellink(struct net_d
  extern int macvlan_link_register(struct rtnl_link_ops *ops);
  
  #if IS_ENABLED(CONFIG_MACVLAN)
@@ -385,7 +292,7 @@
  {
 --- a/include/linux/if_pppol2tp.h
 +++ b/include/linux/if_pppol2tp.h
-@@ -14,4 +14,27 @@
+@@ -12,4 +12,27 @@
  #include <linux/in6.h>
  #include <uapi/linux/if_pppol2tp.h>
  
@@ -415,7 +322,7 @@
  #endif
 --- a/include/linux/if_vlan.h
 +++ b/include/linux/if_vlan.h
-@@ -141,7 +141,11 @@ extern struct net_device *__vlan_find_de
+@@ -143,7 +143,11 @@ extern struct net_device *__vlan_find_de
  extern int vlan_for_each(struct net_device *dev,
  			 int (*action)(struct net_device *dev, int vid,
  				       void *arg), void *arg);
@@ -427,7 +334,7 @@
  extern u16 vlan_dev_vlan_id(const struct net_device *dev);
  extern __be16 vlan_dev_vlan_proto(const struct net_device *dev);
  
-@@ -231,6 +235,12 @@ extern void vlan_vids_del_by_dev(struct
+@@ -236,6 +240,12 @@ extern void vlan_vids_del_by_dev(struct
  extern bool vlan_uses_dev(const struct net_device *dev);
  
  #else
@@ -442,7 +349,7 @@
  		     __be16 vlan_proto, u16 vlan_id)
 --- a/include/linux/mroute.h
 +++ b/include/linux/mroute.h
-@@ -85,4 +85,42 @@ struct rtmsg;
+@@ -92,4 +92,42 @@ struct rtmsg;
  int ipmr_get_route(struct net *net, struct sk_buff *skb,
  		   __be32 saddr, __be32 daddr,
  		   struct rtmsg *rtm, u32 portid);
@@ -541,7 +448,7 @@
  extern int ip6mr_sk_done(struct sock *sk);
 --- a/include/linux/netdevice.h
 +++ b/include/linux/netdevice.h
-@@ -1699,6 +1699,7 @@ enum netdev_extra_priv_flags {
+@@ -1775,6 +1775,7 @@ enum netdev_priv_flags {
   * @IFF_EXT_GRE_V4_TAP: device is a GRE IPv4 TAP device
   * @IFF_EXT_GRE_V6_TAP: device is a GRE IPv6 TAP device
   * @IFF_EXT_IFB: device is an IFB device
@@ -549,7 +456,7 @@
   */
  enum netdev_priv_flags_ext {
  	IFF_EXT_TUN_TAP			= 1<<0,
-@@ -1707,7 +1708,10 @@ enum netdev_priv_flags_ext {
+@@ -1783,7 +1784,10 @@ enum netdev_priv_flags_ext {
  	IFF_EXT_PPP_PPTP		= 1<<3,
  	IFF_EXT_GRE_V4_TAP		= 1<<4,
  	IFF_EXT_GRE_V6_TAP		= 1<<5,
@@ -571,7 +478,7 @@
  #include <linux/notifier.h>
  
  /* PPP channel connection event types */
-@@ -40,6 +41,8 @@ struct ppp_channel_ops {
+@@ -42,6 +43,8 @@ struct ppp_channel_ops {
  	 * the channel subtype
  	 */
  	int (*get_channel_protocol)(struct ppp_channel *);
@@ -580,7 +487,7 @@
  	/* Hold the channel from being destroyed */
  	void (*hold)(struct ppp_channel *);
  	/* Release hold on the channel */
-@@ -63,6 +66,9 @@ struct ppp_channel {
+@@ -65,6 +68,9 @@ struct ppp_channel {
   */
  extern int ppp_channel_get_protocol(struct ppp_channel *);
  
@@ -590,28 +497,17 @@
  /* Call this to hold a channel */
  extern bool ppp_channel_hold(struct ppp_channel *);
  
-@@ -80,9 +86,20 @@ extern int ppp_hold_channels(struct net_
+@@ -82,6 +88,9 @@ extern int ppp_hold_channels(struct net_
  
  bool ppp_is_cp_enabled(struct net_device *dev);
  
 +/* Test if ppp xmit lock is locked */
 +extern bool ppp_is_xmit_locked(struct net_device *dev);
 +
-+/* Hold PPP channels for the PPP device */
-+extern int __ppp_hold_channels(struct net_device *dev,
-+			       struct ppp_channel *channels[],
-+			       unsigned int chan_sz);
-+
  /* Test if the ppp device is a multi-link ppp device */
  extern int ppp_is_multilink(struct net_device *dev);
  
-+/* Test if the ppp device is a multi-link ppp device */
-+extern int __ppp_is_multilink(struct net_device *dev);
-+
- /* Update statistics of the PPP net_device by incrementing related
-  * statistics field value with corresponding parameter
-  */
-@@ -115,6 +132,9 @@ extern void ppp_unregister_channel(struc
+@@ -117,6 +126,9 @@ extern void ppp_unregister_channel(struc
  /* Get the channel number for a channel */
  extern int ppp_channel_index(struct ppp_channel *);
  
@@ -623,7 +519,7 @@
  
 --- a/include/net/ip6_route.h
 +++ b/include/net/ip6_route.h
-@@ -211,6 +211,9 @@ void rt6_multipath_rebalance(struct fib6
+@@ -207,6 +207,9 @@ void rt6_multipath_rebalance(struct fib6
  void rt6_uncached_list_add(struct rt6_info *rt);
  void rt6_uncached_list_del(struct rt6_info *rt);
  
@@ -635,7 +531,7 @@
  	const struct dst_entry *dst = skb_dst(skb);
 --- a/include/net/neighbour.h
 +++ b/include/net/neighbour.h
-@@ -241,6 +241,11 @@ static inline int neigh_parms_family(str
+@@ -249,6 +249,11 @@ static inline int neigh_parms_family(str
  	return p->tbl->family;
  }
  
@@ -647,7 +543,7 @@
  #define NEIGH_PRIV_ALIGN	sizeof(long long)
  #define NEIGH_ENTRY_SIZE(size)	ALIGN((size), NEIGH_PRIV_ALIGN)
  
-@@ -369,6 +374,9 @@ int neigh_xmit(int fam, struct net_devic
+@@ -395,6 +400,9 @@ void __neigh_for_each_release(struct nei
  			      int (*cb)(struct neighbour *));
  int neigh_xmit(int fam, struct net_device *, const void *, struct sk_buff *);
  
@@ -657,103 +553,18 @@
  struct neigh_seq_state {
  	struct seq_net_private p;
  	struct neigh_table *tbl;
---- a/include/net/netfilter/nf_conntrack_ecache.h
-+++ b/include/net/netfilter/nf_conntrack_ecache.h
-@@ -83,14 +83,52 @@ struct nf_ct_event_notifier {
- 	int (*exp_event)(unsigned int events, const struct nf_exp_event *item);
- };
- 
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+extern int nf_conntrack_register_notifier(struct net *net,
-+					  struct notifier_block *nb);
-+extern int nf_conntrack_unregister_notifier(struct net *net,
-+					    struct notifier_block *nb);
-+static inline int
-+nf_conntrack_eventmask_report(unsigned int eventmask,
-+			      struct nf_conn *ct,
-+			      u32 portid,
-+			      int report)
-+{
-+	struct nf_conntrack_ecache *e;
-+	struct net *net = nf_ct_net(ct);
-+
-+	e = nf_ct_ecache_find(ct);
-+	if (e == NULL)
-+		return 0;
-+
-+	if (nf_ct_is_confirmed(ct)) {
-+		struct nf_ct_event item = {
-+			.ct = ct,
-+			.portid = e->portid ? e->portid : portid,
-+			.report = report
-+		};
-+		/* This is a resent of a destroy event? If so, skip missed */
-+		unsigned long missed = e->portid ? 0 : e->missed;
-+
-+		if (!((eventmask | missed) & e->ctmask))
-+			return 0;
-+
-+		atomic_notifier_call_chain(&net->ct.nf_conntrack_chain,
-+					   eventmask | missed, &item);
-+	}
-+
-+	return 0;
-+}
-+#else
-+
- void nf_conntrack_register_notifier(struct net *net,
- 				   const struct nf_ct_event_notifier *nb);
- void nf_conntrack_unregister_notifier(struct net *net);
--
--void nf_ct_deliver_cached_events(struct nf_conn *ct);
- int nf_conntrack_eventmask_report(unsigned int eventmask, struct nf_conn *ct,
- 				  u32 portid, int report);
--
-+#endif
-+
-+void nf_ct_deliver_cached_events(struct nf_conn *ct);
- bool nf_ct_ecache_ext_add(struct nf_conn *ct, u16 ctmask, u16 expmask, gfp_t gfp);
- #else
- 
-@@ -111,11 +150,13 @@ static inline void
- nf_conntrack_event_cache(enum ip_conntrack_events event, struct nf_conn *ct)
- {
- #ifdef CONFIG_NF_CONNTRACK_EVENTS
--	struct net *net = nf_ct_net(ct);
- 	struct nf_conntrack_ecache *e;
-+#ifndef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+	struct net *net = nf_ct_net(ct);
- 
- 	if (!rcu_access_pointer(net->ct.nf_conntrack_event_cb))
- 		return;
-+#endif
- 
- 	e = nf_ct_ecache_find(ct);
- 	if (e == NULL)
 --- a/include/net/netfilter/nf_conntrack_timeout.h
 +++ b/include/net/netfilter/nf_conntrack_timeout.h
-@@ -123,5 +123,6 @@ static inline void nf_ct_destroy_timeout
+@@ -107,5 +107,6 @@ struct nf_ct_timeout_hooks {
  
  extern const struct nf_ct_timeout_hooks __rcu *nf_ct_timeout_hook;
  #endif
 +extern unsigned int *udp_get_timeouts(struct net *net);
  
  #endif /* _NF_CONNTRACK_TIMEOUT_H */
---- a/include/net/netns/conntrack.h
-+++ b/include/net/netns/conntrack.h
-@@ -113,6 +113,9 @@ struct netns_ct {
- 	u8			sysctl_tstamp;
- 	u8			sysctl_checksum;
- 
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+	struct atomic_notifier_head nf_conntrack_chain;
-+#endif
- 	struct ip_conntrack_stat __percpu *stat;
- 	struct nf_ct_event_notifier __rcu *nf_conntrack_event_cb;
- 	struct nf_ip_net	nf_ct_proto;
 --- a/include/net/route.h
 +++ b/include/net/route.h
-@@ -234,6 +234,9 @@ struct rtable *rt_dst_alloc(struct net_d
+@@ -237,6 +237,9 @@ struct rtable *rt_dst_alloc(struct net_d
  			    unsigned int flags, u16 type, bool noxfrm);
  struct rtable *rt_dst_clone(struct net_device *dev, struct rtable *rt);
  
@@ -765,7 +576,7 @@
  void fib_del_ifaddr(struct in_ifaddr *, struct in_ifaddr *);
 --- a/include/uapi/linux/in.h
 +++ b/include/uapi/linux/in.h
-@@ -62,6 +62,8 @@ enum {
+@@ -63,6 +63,8 @@ enum {
  #define IPPROTO_MTP		IPPROTO_MTP
    IPPROTO_BEETPH = 94,		/* IP option pseudo header for BEET	*/
  #define IPPROTO_BEETPH		IPPROTO_BEETPH
@@ -774,15 +585,6 @@
    IPPROTO_ENCAP = 98,		/* Encapsulation Header			*/
  #define IPPROTO_ENCAP		IPPROTO_ENCAP
    IPPROTO_PIM = 103,		/* Protocol Independent Multicast	*/
-@@ -332,7 +334,7 @@ struct sockaddr_in {
- #endif
- 
- /* <asm/byteorder.h> contains the htonl type stuff.. */
--#include <asm/byteorder.h> 
-+#include <asm/byteorder.h>
- 
- 
- #endif /* _UAPI_LINUX_IN_H */
 --- a/net/8021q/vlan_core.c
 +++ b/net/8021q/vlan_core.c
 @@ -72,6 +72,26 @@ bool vlan_do_receive(struct sk_buff **sk
@@ -855,7 +657,7 @@
  					      const char *addr, __u16 vid)
 --- a/net/bridge/br_if.c
 +++ b/net/bridge/br_if.c
-@@ -880,3 +880,14 @@ void br_dev_update_stats(struct net_devi
+@@ -868,3 +868,14 @@ void br_dev_update_stats(struct net_devi
  	u64_stats_update_end(&tstats->syncp);
  }
  EXPORT_SYMBOL_GPL(br_dev_update_stats);
@@ -936,7 +738,7 @@
  }
 --- a/net/ipv4/fib_trie.c
 +++ b/net/ipv4/fib_trie.c
-@@ -1206,6 +1206,9 @@ static bool fib_valid_key_len(u32 key, u
+@@ -1211,6 +1211,9 @@ static bool fib_valid_key_len(u32 key, u
  static void fib_remove_alias(struct trie *t, struct key_vector *tp,
  			     struct key_vector *l, struct fib_alias *old);
  
@@ -946,7 +748,7 @@
  /* Caller must hold RTNL. */
  int fib_table_insert(struct net *net, struct fib_table *tb,
  		     struct fib_config *cfg, struct netlink_ext_ack *extack)
-@@ -1398,6 +1401,8 @@ int fib_table_insert(struct net *net, st
+@@ -1404,6 +1407,8 @@ int fib_table_insert(struct net *net, st
  	rtmsg_fib(RTM_NEWROUTE, htonl(key), new_fa, plen, new_fa->tb_id,
  		  &cfg->fc_nlinfo, nlflags);
  succeeded:
@@ -955,7 +757,7 @@
  	return 0;
  
  out_remove_new_fa:
-@@ -1769,6 +1774,8 @@ int fib_table_delete(struct net *net, st
+@@ -1775,6 +1780,8 @@ int fib_table_delete(struct net *net, st
  	if (fa_to_delete->fa_state & FA_S_ACCESSED)
  		rt_cache_flush(cfg->fc_nlinfo.nl_net);
  
@@ -964,7 +766,7 @@
  	fib_release_info(fa_to_delete->fa_info);
  	alias_free_mem_rcu(fa_to_delete);
  	return 0;
-@@ -2401,6 +2408,18 @@ void __init fib_trie_init(void)
+@@ -2407,6 +2414,18 @@ void __init fib_trie_init(void)
  					   0, SLAB_PANIC | SLAB_ACCOUNT, NULL);
  }
  
@@ -985,7 +787,7 @@
  	struct fib_table *tb;
 --- a/net/ipv4/ipmr.c
 +++ b/net/ipv4/ipmr.c
-@@ -84,6 +84,9 @@ static DEFINE_RWLOCK(mrt_lock);
+@@ -89,6 +89,9 @@ static struct net_device *vif_dev_read(c
  /* Special spinlock for queue of unresolved entries */
  static DEFINE_SPINLOCK(mfc_unres_lock);
  
@@ -995,7 +797,7 @@
  /* We return to original Alan's scheme. Hash table of resolved
   * entries is changed only in process context and protected
   * with weak lock mrt_lock. Queue of unresolved entries is protected
-@@ -107,6 +110,9 @@ static void mroute_netlink_event(struct
+@@ -112,6 +115,9 @@ static void mroute_netlink_event(struct
  static void igmpmsg_netlink_event(const struct mr_table *mrt, struct sk_buff *pkt);
  static void mroute_clean_tables(struct mr_table *mrt, int flags);
  static void ipmr_expire_process(struct timer_list *t);
@@ -1005,7 +807,7 @@
  
  #ifdef CONFIG_IP_MROUTE_MULTIPLE_TABLES
  #define ipmr_for_each_table(mrt, net)					\
-@@ -222,6 +228,78 @@ static int ipmr_rule_fill(struct fib_rul
+@@ -223,6 +229,78 @@ static int ipmr_rule_fill(struct fib_rul
  	return 0;
  }
  
@@ -1239,7 +1041,7 @@
  static int __net_init ipmr_rules_init(struct net *net)
  {
  	struct fib_rules_ops *ops;
-@@ -1184,6 +1410,8 @@ static int ipmr_mfc_delete(struct mr_tab
+@@ -1191,6 +1417,8 @@ static int ipmr_mfc_delete(struct mr_tab
  	call_ipmr_mfc_entry_notifiers(net, FIB_EVENT_ENTRY_DEL, c, mrt->id);
  	mroute_netlink_event(mrt, c, RTM_DELROUTE);
  	mr_cache_put(&c->_c);
@@ -1248,7 +1050,7 @@
  
  	return 0;
  }
-@@ -1214,6 +1442,8 @@ static int ipmr_mfc_add(struct net *net,
+@@ -1221,6 +1449,8 @@ static int ipmr_mfc_add(struct net *net,
  		call_ipmr_mfc_entry_notifiers(net, FIB_EVENT_ENTRY_REPLACE, c,
  					      mrt->id);
  		mroute_netlink_event(mrt, c, RTM_NEWROUTE);
@@ -1257,7 +1059,7 @@
  		return 0;
  	}
  
-@@ -1274,6 +1504,7 @@ static void mroute_clean_tables(struct m
+@@ -1281,6 +1511,7 @@ static void mroute_clean_tables(struct m
  	struct net *net = read_pnet(&mrt->net);
  	struct mr_mfc *c, *tmp;
  	struct mfc_cache *cache;
@@ -1265,7 +1067,7 @@
  	LIST_HEAD(list);
  	int i;
  
-@@ -1298,10 +1529,14 @@ static void mroute_clean_tables(struct m
+@@ -1305,10 +1536,14 @@ static void mroute_clean_tables(struct m
  			rhltable_remove(&mrt->mfc_hash, &c->mnode, ipmr_rht_params);
  			list_del_rcu(&c->list);
  			cache = (struct mfc_cache *)c;
@@ -1282,7 +1084,7 @@
  
 --- a/net/ipv6/ip6mr.c
 +++ b/net/ipv6/ip6mr.c
-@@ -69,6 +69,9 @@ static DEFINE_RWLOCK(mrt_lock);
+@@ -74,6 +74,9 @@ static struct net_device *vif_dev_read(c
  /* Special spinlock for queue of unresolved entries */
  static DEFINE_SPINLOCK(mfc_unres_lock);
  
@@ -1292,7 +1094,7 @@
  /* We return to original Alan's scheme. Hash table of resolved
     entries is changed only in process context and protected
     with weak lock mrt_lock. Queue of unresolved entries is protected
-@@ -94,6 +97,11 @@ static int ip6mr_rtm_dumproute(struct sk
+@@ -101,6 +104,11 @@ static int ip6mr_rtm_dumproute(struct sk
  			       struct netlink_callback *cb);
  static void mroute_clean_tables(struct mr_table *mrt, int flags);
  static void ipmr_expire_process(struct timer_list *t);
@@ -1387,7 +1189,7 @@
  static struct mr_table_ops ip6mr_mr_table_ops = {
  	.rht_params = &ip6mr_rht_params,
  	.cmparg_any = &ip6mr_mr_table_ops_cmparg_any,
-@@ -694,6 +778,149 @@ static int call_ip6mr_mfc_entry_notifier
+@@ -697,6 +781,149 @@ static int call_ip6mr_mfc_entry_notifier
  				     &mfc->_c, tb_id, &net->ipv6.ipmr_seq);
  }
  
@@ -1537,7 +1339,7 @@
  /* Delete a VIF entry */
  static int mif6_delete(struct mr_table *mrt, int vifi, int notify,
  		       struct list_head *head)
-@@ -1215,6 +1442,7 @@ static int ip6mr_mfc_delete(struct mr_ta
+@@ -1221,6 +1448,7 @@ static int ip6mr_mfc_delete(struct mr_ta
  			    int parent)
  {
  	struct mfc6_cache *c;
@@ -1545,7 +1347,7 @@
  
  	/* The entries are added/deleted only under RTNL */
  	rcu_read_lock();
-@@ -1223,6 +1451,9 @@ static int ip6mr_mfc_delete(struct mr_ta
+@@ -1229,6 +1457,9 @@ static int ip6mr_mfc_delete(struct mr_ta
  	rcu_read_unlock();
  	if (!c)
  		return -ENOENT;
@@ -1555,7 +1357,7 @@
  	rhltable_remove(&mrt->mfc_hash, &c->_c.mnode, ip6mr_rht_params);
  	list_del_rcu(&c->_c.list);
  
-@@ -1230,6 +1461,9 @@ static int ip6mr_mfc_delete(struct mr_ta
+@@ -1236,6 +1467,9 @@ static int ip6mr_mfc_delete(struct mr_ta
  				       FIB_EVENT_ENTRY_DEL, c, mrt->id);
  	mr6_netlink_event(mrt, c, RTM_DELROUTE);
  	mr_cache_put(&c->_c);
@@ -1565,7 +1367,7 @@
  	return 0;
  }
  
-@@ -1439,6 +1673,9 @@ static int ip6mr_mfc_add(struct net *net
+@@ -1457,6 +1691,9 @@ static int ip6mr_mfc_add(struct net *net
  		call_ip6mr_mfc_entry_notifiers(net, FIB_EVENT_ENTRY_REPLACE,
  					       c, mrt->id);
  		mr6_netlink_event(mrt, c, RTM_NEWROUTE);
@@ -1575,7 +1377,7 @@
  		return 0;
  	}
  
-@@ -1501,7 +1738,9 @@ static int ip6mr_mfc_add(struct net *net
+@@ -1519,7 +1756,9 @@ static int ip6mr_mfc_add(struct net *net
  
  static void mroute_clean_tables(struct mr_table *mrt, int flags)
  {
@@ -1585,7 +1387,7 @@
  	LIST_HEAD(list);
  	int i;
  
-@@ -1523,13 +1762,18 @@ static void mroute_clean_tables(struct m
+@@ -1541,13 +1780,18 @@ static void mroute_clean_tables(struct m
  			if (((c->mfc_flags & MFC_STATIC) && !(flags & MRT6_FLUSH_MFC_STATIC)) ||
  			    (!(c->mfc_flags & MFC_STATIC) && !(flags & MRT6_FLUSH_MFC)))
  				continue;
@@ -1608,7 +1410,7 @@
  
 --- a/net/ipv6/route.c
 +++ b/net/ipv6/route.c
-@@ -192,6 +192,9 @@ static void rt6_uncached_list_flush_dev(
+@@ -197,6 +197,9 @@ static void rt6_uncached_list_flush_dev(
  	}
  }
  
@@ -1618,7 +1420,7 @@
  static inline const void *choose_neigh_daddr(const struct in6_addr *p,
  					     struct sk_buff *skb,
  					     const void *daddr)
-@@ -4512,6 +4515,10 @@ int ipv6_route_ioctl(struct net *net, un
+@@ -4490,6 +4493,10 @@ int ipv6_route_ioctl(struct net *net, un
  		break;
  	}
  	rtnl_unlock();
@@ -1629,7 +1431,7 @@
  	return err;
  }
  
-@@ -5522,11 +5529,17 @@ static int inet6_rtm_delroute(struct sk_
+@@ -5508,11 +5515,17 @@ static int inet6_rtm_delroute(struct sk_
  	}
  
  	if (cfg.fc_mp)
@@ -1649,7 +1451,7 @@
  }
  
  static int inet6_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh,
-@@ -5543,9 +5556,15 @@ static int inet6_rtm_newroute(struct sk_
+@@ -5529,9 +5542,15 @@ static int inet6_rtm_newroute(struct sk_
  		cfg.fc_metric = IP6_RT_PRIO_USER;
  
  	if (cfg.fc_mp)
@@ -1667,7 +1469,7 @@
  }
  
  /* add the overhead of this fib6_nh to nexthop_len */
-@@ -6343,6 +6362,18 @@ static int ip6_route_dev_notify(struct n
+@@ -6329,6 +6348,18 @@ static int ip6_route_dev_notify(struct n
  	return NOTIFY_OK;
  }
  
@@ -1716,7 +1518,7 @@
  };
  
  static const struct proto_ops pppol2tp_ops;
-@@ -238,6 +246,7 @@ static void pppol2tp_recv(struct l2tp_se
+@@ -237,6 +245,7 @@ static void pppol2tp_recv(struct l2tp_se
  		struct pppox_sock *po;
  
  		po = pppox_sk(sk);
@@ -1724,7 +1526,7 @@
  		ppp_input(&po->chan, skb);
  	} else {
  		if (sock_queue_rcv_skb(sk, skb) < 0) {
-@@ -329,6 +338,104 @@ error:
+@@ -328,6 +337,104 @@ error:
  	return error;
  }
  
@@ -1829,7 +1631,7 @@
  /* Transmit function called by generic PPP driver.  Sends PPP frame
   * over PPPoL2TP socket.
   *
-@@ -373,6 +480,10 @@ static int pppol2tp_xmit(struct ppp_chan
+@@ -372,6 +479,10 @@ static int pppol2tp_xmit(struct ppp_chan
  	__skb_push(skb, 2);
  	skb->data[0] = PPP_ALLSTATIONS;
  	skb->data[1] = PPP_UI;
@@ -1840,7 +1642,7 @@
  
  	local_bh_disable();
  	l2tp_xmit_skb(session, skb);
-@@ -819,7 +930,7 @@ static int pppol2tp_connect(struct socke
+@@ -818,7 +929,7 @@ static int pppol2tp_connect(struct socke
  	po->chan.hdrlen = PPPOL2TP_L2TP_HDR_SIZE_NOSEQ;
  
  	po->chan.private = sk;
@@ -1849,245 +1651,6 @@
  	po->chan.mtu	 = pppol2tp_tunnel_mtu(tunnel);
  
  	error = ppp_register_net_channel(sock_net(sk), &po->chan);
---- a/net/netfilter/Kconfig
-+++ b/net/netfilter/Kconfig
-@@ -167,6 +167,14 @@ config NF_CONNTRACK_DSCPREMARK_EXT
- 	  This option enables support for connection tracking extension
- 	  for dscp remark.
- 
-+config NF_CONNTRACK_CHAIN_EVENTS
-+	bool "Register multiple callbacks to ct events"
-+	depends on NF_CONNTRACK_EVENTS
-+	help
-+	  Support multiple registrations.
-+
-+	  If unsure, say `N'.
-+
- config NF_CONNTRACK_TIMESTAMP
- 	bool  'Connection tracking timestamping'
- 	depends on NETFILTER_ADVANCED
---- a/net/netfilter/nf_conntrack_core.c
-+++ b/net/netfilter/nf_conntrack_core.c
-@@ -2909,6 +2909,9 @@ int nf_conntrack_init_net(struct net *ne
- 	nf_conntrack_ecache_pernet_init(net);
- 	nf_conntrack_proto_pernet_init(net);
- 
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+	ATOMIC_INIT_NOTIFIER_HEAD(&net->ct.nf_conntrack_chain);
-+#endif
- 	return 0;
- 
- err_expect:
---- a/net/netfilter/nf_conntrack_ecache.c
-+++ b/net/netfilter/nf_conntrack_ecache.c
-@@ -17,6 +17,9 @@
- #include <linux/vmalloc.h>
- #include <linux/stddef.h>
- #include <linux/err.h>
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+#include <linux/notifier.h>
-+#endif
- #include <linux/kernel.h>
- #include <linux/netdevice.h>
- #include <linux/slab.h>
-@@ -130,6 +133,7 @@ static void ecache_work(struct work_stru
- 		schedule_delayed_work(&cnet->ecache.dwork, delay);
- }
- 
-+#ifndef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
- static int __nf_conntrack_eventmask_report(struct nf_conntrack_ecache *e,
- 					   const u32 events,
- 					   const u32 missed,
-@@ -204,9 +208,56 @@ int nf_conntrack_eventmask_report(unsign
- 	return ret;
- }
- EXPORT_SYMBOL_GPL(nf_conntrack_eventmask_report);
-+#endif
- 
- /* deliver cached events and clear cache entry - must be called with locally
-  * disabled softirqs */
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+void nf_ct_deliver_cached_events(struct nf_conn *ct)
-+{
-+	unsigned long events, missed;
-+	struct nf_conntrack_ecache *e;
-+	struct nf_ct_event item;
-+	struct net *net = nf_ct_net(ct);
-+	int ret = 0;
-+
-+	e = nf_ct_ecache_find(ct);
-+	if (!e)
-+		return;
-+
-+	events = xchg(&e->cache, 0);
-+
-+	if (!nf_ct_is_confirmed(ct) || nf_ct_is_dying(ct) || !events)
-+		return;
-+
-+	/*
-+	 * We make a copy of the missed event cache without taking
-+	 * the lock, thus we may send missed events twice. However,
-+	 * this does not harm and it happens very rarely.
-+	 */
-+	missed = e->missed;
-+
-+	if (!((events | missed) & e->ctmask))
-+		return;
-+
-+	item.ct = ct;
-+	item.portid = 0;
-+	item.report = 0;
-+
-+	atomic_notifier_call_chain(&net->ct.nf_conntrack_chain,
-+				   events | missed, &item);
-+
-+	if (likely(ret >= 0 && !missed))
-+		return;
-+
-+	spin_lock_bh(&ct->lock);
-+	if (ret < 0)
-+		e->missed |= events;
-+	else
-+		e->missed &= ~missed;
-+	spin_unlock_bh(&ct->lock);
-+}
-+#else
- void nf_ct_deliver_cached_events(struct nf_conn *ct)
- {
- 	struct nf_conntrack_ecache *e;
-@@ -232,6 +283,7 @@ void nf_ct_deliver_cached_events(struct
- 	 */
- 	__nf_conntrack_eventmask_report(e, events, e->missed, &item);
- }
-+#endif
- EXPORT_SYMBOL_GPL(nf_ct_deliver_cached_events);
- 
- void nf_ct_expect_event_report(enum ip_conntrack_expect_events event,
-@@ -264,6 +316,12 @@ out_unlock:
- 	rcu_read_unlock();
- }
- 
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+int nf_conntrack_register_notifier(struct net *net, struct notifier_block *nb)
-+{
-+	return atomic_notifier_chain_register(&net->ct.nf_conntrack_chain, nb);
-+}
-+#else
- void nf_conntrack_register_notifier(struct net *net,
- 				    const struct nf_ct_event_notifier *new)
- {
-@@ -276,8 +334,16 @@ void nf_conntrack_register_notifier(stru
- 	rcu_assign_pointer(net->ct.nf_conntrack_event_cb, new);
- 	mutex_unlock(&nf_ct_ecache_mutex);
- }
-+#endif
- EXPORT_SYMBOL_GPL(nf_conntrack_register_notifier);
- 
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+int nf_conntrack_unregister_notifier(struct net *net, struct notifier_block *nb)
-+{
-+	return atomic_notifier_chain_unregister(&net->ct.nf_conntrack_chain,
-+						nb);
-+}
-+#else
- void nf_conntrack_unregister_notifier(struct net *net)
- {
- 	mutex_lock(&nf_ct_ecache_mutex);
-@@ -285,6 +351,7 @@ void nf_conntrack_unregister_notifier(st
- 	mutex_unlock(&nf_ct_ecache_mutex);
- 	/* synchronize_rcu() is called after netns pre_exit */
- }
-+#endif
- EXPORT_SYMBOL_GPL(nf_conntrack_unregister_notifier);
- 
- void nf_conntrack_ecache_work(struct net *net, enum nf_ct_ecache_state state)
---- a/net/netfilter/nf_conntrack_netlink.c
-+++ b/net/netfilter/nf_conntrack_netlink.c
-@@ -28,6 +28,9 @@
- #include <linux/netlink.h>
- #include <linux/spinlock.h>
- #include <linux/interrupt.h>
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+#include <linux/notifier.h>
-+#endif
- #include <linux/slab.h>
- #include <linux/siphash.h>
- 
-@@ -711,18 +714,26 @@ static size_t ctnetlink_nlmsg_size(const
- 	       ;
- }
- 
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+static int ctnetlink_conntrack_event(struct notifier_block *this,
-+				     unsigned long events, void *ptr)
-+#else
- static int
- ctnetlink_conntrack_event(unsigned int events, const struct nf_ct_event *item)
-+#endif
- {
- 	const struct nf_conntrack_zone *zone;
- 	struct net *net;
- 	struct nlmsghdr *nlh;
- 	struct nlattr *nest_parms;
--	struct nf_conn *ct = item->ct;
- 	struct sk_buff *skb;
- 	unsigned int type;
- 	unsigned int flags = 0, group;
- 	int err;
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+	struct nf_ct_event *item = (struct nf_ct_event *)ptr;
-+#endif
-+	struct nf_conn *ct = item->ct;
- 
- 	if (events & (1 << IPCT_DESTROY)) {
- 		type = IPCTNL_MSG_CT_DELETE;
-@@ -3112,6 +3123,7 @@ nla_put_failure:
- }
- 
- #ifdef CONFIG_NF_CONNTRACK_EVENTS
-+#ifndef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
- static int
- ctnetlink_expect_event(unsigned int events, const struct nf_exp_event *item)
- {
-@@ -3161,6 +3173,7 @@ errout:
- 	return 0;
- }
- #endif
-+#endif
- static int ctnetlink_exp_done(struct netlink_callback *cb)
- {
- 	if (cb->args[1])
-@@ -3765,11 +3778,17 @@ static int ctnetlink_stat_exp_cpu(struct
- }
- 
- #ifdef CONFIG_NF_CONNTRACK_EVENTS
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+static struct notifier_block ctnl_notifier = {
-+	.notifier_call = ctnetlink_conntrack_event,
-+};
-+#else
- static struct nf_ct_event_notifier ctnl_notifier = {
- 	.ct_event = ctnetlink_conntrack_event,
- 	.exp_event = ctnetlink_expect_event,
- };
- #endif
-+#endif
- 
- static const struct nfnl_callback ctnl_cb[IPCTNL_MSG_MAX] = {
- 	[IPCTNL_MSG_CT_NEW]	= {
-@@ -3868,8 +3887,12 @@ static int __net_init ctnetlink_net_init
- static void ctnetlink_net_pre_exit(struct net *net)
- {
- #ifdef CONFIG_NF_CONNTRACK_EVENTS
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+	nf_conntrack_unregister_notifier(net, &ctnl_notifier);
-+#else
- 	nf_conntrack_unregister_notifier(net);
- #endif
-+#endif
- }
- 
- static struct pernet_operations ctnetlink_net_ops = {
 --- a/net/netfilter/nf_conntrack_proto_udp.c
 +++ b/net/netfilter/nf_conntrack_proto_udp.c
 @@ -29,10 +29,11 @@ static const unsigned int udp_timeouts[U
@@ -2105,7 +1668,7 @@
  			  const struct nf_hook_state *state,
 --- a/tools/include/uapi/linux/in.h
 +++ b/tools/include/uapi/linux/in.h
-@@ -62,6 +62,8 @@ enum {
+@@ -63,6 +63,8 @@ enum {
  #define IPPROTO_MTP		IPPROTO_MTP
    IPPROTO_BEETPH = 94,		/* IP option pseudo header for BEET	*/
  #define IPPROTO_BEETPH		IPPROTO_BEETPH
@@ -2114,12 +1677,3 @@
    IPPROTO_ENCAP = 98,		/* Encapsulation Header			*/
  #define IPPROTO_ENCAP		IPPROTO_ENCAP
    IPPROTO_PIM = 103,		/* Protocol Independent Multicast	*/
-@@ -330,7 +332,7 @@ struct sockaddr_in {
- #endif
- 
- /* <asm/byteorder.h> contains the htonl type stuff.. */
--#include <asm/byteorder.h> 
-+#include <asm/byteorder.h>
- 
- 
- #endif /* _UAPI_LINUX_IN_H */

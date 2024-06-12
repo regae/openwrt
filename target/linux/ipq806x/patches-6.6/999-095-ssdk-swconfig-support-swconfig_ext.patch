@@ -125,7 +125,7 @@ Signed-off-by: xiaofeis <xiaofeis@codeaurora.org>
  	swconfig_put_dev(dev);
  	return err;
  }
-@@ -1213,6 +1284,10 @@ switch_generic_set_link(struct switch_de
+@@ -1216,6 +1287,10 @@ switch_generic_set_link(struct switch_de
  		case SWITCH_PORT_SPEED_1000:
  			bmcr |= BMCR_SPEED1000;
  			break;
@@ -138,7 +138,7 @@ Signed-off-by: xiaofeis <xiaofeis@codeaurora.org>
  		}
 --- a/drivers/net/phy/swconfig_leds.c
 +++ b/drivers/net/phy/swconfig_leds.c
-@@ -478,6 +478,12 @@ swconfig_led_work_func(struct work_struc
+@@ -494,6 +494,12 @@ swconfig_led_work_func(struct work_struc
  					sw_trig->link_speed[i] =
  						SWCONFIG_LED_PORT_SPEED_1000;
  					break;
