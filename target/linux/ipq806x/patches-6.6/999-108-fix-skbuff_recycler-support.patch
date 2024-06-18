@@ -1,0 +1,97 @@
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -122,7 +122,11 @@ static struct kmem_cache *skbuff_fclone_
+ static struct kmem_cache *skbuff_ext_cache __ro_after_init;
+ #endif
+ 
++#if !defined(CONFIG_SKB_RECYCLER)
++#define HAVE_SKB_SMALL_HEAD_CACHE 1
++#endif
+ 
++#ifdef HAVE_SKB_SMALL_HEAD_CACHE
+ static struct kmem_cache *skb_small_head_cache __ro_after_init;
+ 
+ #define SKB_SMALL_HEAD_SIZE SKB_HEAD_ALIGN(MAX_TCP_HEADER)
+@@ -139,6 +143,7 @@ static struct kmem_cache *skb_small_head
+ 
+ #define SKB_SMALL_HEAD_HEADROOM						\
+ 	SKB_WITH_OVERHEAD(SKB_SMALL_HEAD_CACHE_SIZE)
++#endif
+ 
+ int sysctl_max_skb_frags __read_mostly = MAX_SKB_FRAGS;
+ EXPORT_SYMBOL(sysctl_max_skb_frags);
+@@ -586,6 +591,8 @@ static void *kmalloc_reserve(unsigned in
+ 	void *obj;
+ 
+ 	obj_size = SKB_HEAD_ALIGN(*size);
++
++#ifdef HAVE_SKB_SMALL_HEAD_CACHE
+ 	if (obj_size <= SKB_SMALL_HEAD_CACHE_SIZE &&
+ 	    !(flags & KMALLOC_NOT_NORMAL_BITS)) {
+ 		obj = kmem_cache_alloc_node(skb_small_head_cache,
+@@ -599,6 +606,21 @@ static void *kmalloc_reserve(unsigned in
+ 		obj = kmem_cache_alloc_node(skb_small_head_cache, flags, node);
+ 		goto out;
+ 	}
++#else
++	if (obj_size > SZ_2K && obj_size <= SKB_DATA_CACHE_SIZE) {
++		obj = kmem_cache_alloc_node(skb_data_cache,
++				flags | __GFP_NOMEMALLOC | __GFP_NOWARN,
++				node);
++		*size = SKB_DATA_CACHE_SIZE;
++		if (obj || !(gfp_pfmemalloc_allowed(flags)))
++			goto out;
++
++		/* Try again but now we are using pfmemalloc reserves */
++		ret_pfmemalloc = true;
++		obj = kmem_cache_alloc_node(skb_data_cache, flags, node);
++		goto out;
++	}
++#endif
+ 
+ 	obj_size = kmalloc_size_roundup(obj_size);
+ 	/* The following cast might truncate high-order bits of obj_size, this
+@@ -1070,9 +1092,11 @@ static bool skb_pp_recycle(struct sk_buf
+ 
+ static void skb_kfree_head(void *head, unsigned int end_offset)
+ {
++#ifdef HAVE_SKB_SMALL_HEAD_CACHE
+ 	if (end_offset == SKB_SMALL_HEAD_HEADROOM)
+ 		kmem_cache_free(skb_small_head_cache, head);
+ 	else
++#endif
+ 		kfree(head);
+ }
+ 
+@@ -2428,6 +2452,7 @@ int __skb_unclone_keeptruesize(struct sk
+ 	if (likely(skb_end_offset(skb) == saved_end_offset))
+ 		return 0;
+ 
++#ifdef HAVE_SKB_SMALL_HEAD_CACHE
+ 	/* We can not change skb->end if the original or new value
+ 	 * is SKB_SMALL_HEAD_HEADROOM, as it might break skb_kfree_head().
+ 	 */
+@@ -2441,6 +2466,7 @@ int __skb_unclone_keeptruesize(struct sk
+ 		WARN_ON_ONCE(1);
+ 		return 0;
+ 	}
++#endif
+ 
+ 	shinfo = skb_shinfo(skb);
+ 
+@@ -5093,6 +5119,7 @@ void __init skb_init(void)
+ 	 * struct skb_shared_info is located at the end of skb->head,
+ 	 * and should not be copied to/from user.
+ 	 */
++#ifdef HAVE_SKB_SMALL_HEAD_CACHE
+ 	skb_small_head_cache = kmem_cache_create_usercopy("skbuff_small_head",
+ 						SKB_SMALL_HEAD_CACHE_SIZE,
+ 						0,
+@@ -5100,6 +5127,7 @@ void __init skb_init(void)
+ 						0,
+ 						SKB_SMALL_HEAD_HEADROOM,
+ 						NULL);
++#endif
+ 	skb_extensions_init();
+ 	skb_recycler_init();
+ }
