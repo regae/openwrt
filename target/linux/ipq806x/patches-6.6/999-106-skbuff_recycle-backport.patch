@@ -1,18 +1,3 @@
---- a/MAINTAINERS
-+++ b/MAINTAINERS
-@@ -67,6 +67,12 @@ Maintainers List
-           first. When adding to this list, please keep the entries in
-           alphabetical order.
- 
-+SKB RECYCLER SUPPORT
-+M:	Casey Chen <kexinc@codeaurora.org>
-+S:	Maintained
-+F:	net/core/skbuff_recycle.*
-+F:	net/core/skbuff_debug.*
-+
- 3C59X NETWORK DRIVER
- M:	Steffen Klassert <klassert@kernel.org>
- L:	netdev@vger.kernel.org
 --- a/include/linux/cpuhotplug.h
 +++ b/include/linux/cpuhotplug.h
 @@ -94,6 +94,7 @@ enum cpuhp_state {
@@ -159,15 +144,7 @@
  struct kmem_cache *skbuff_cache __ro_after_init;
  static struct kmem_cache *skbuff_fclone_cache __ro_after_init;
  #ifdef CONFIG_SKB_EXTENSIONS
-@@ -363,7 +391,6 @@ static inline void __finalize_skb_around
- 	shinfo = skb_shinfo(skb);
- 	memset(shinfo, 0, offsetof(struct skb_shared_info, dataref));
- 	atomic_set(&shinfo->dataref, 1);
--
- 	skb_set_kcov_handle(skb, kcov_common_handle());
- }
- 
-@@ -449,6 +476,7 @@ struct sk_buff *__build_skb(void *data,
+@@ -449,6 +477,7 @@ struct sk_buff *__build_skb(void *data,
  	skb = kmem_cache_alloc(skbuff_cache, GFP_ATOMIC);
  	if (unlikely(!skb))
  		return NULL;
@@ -175,7 +152,7 @@
  
  	memset(skb, 0, offsetof(struct sk_buff, tail));
  	__build_skb_around(skb, data, frag_size);
-@@ -511,6 +539,8 @@ static struct sk_buff *__napi_build_skb(
+@@ -511,6 +540,8 @@ static struct sk_buff *__napi_build_skb(
  	if (unlikely(!skb))
  		return NULL;
  
@@ -184,7 +161,7 @@
  	memset(skb, 0, offsetof(struct sk_buff, tail));
  	__build_skb_around(skb, data, frag_size);
  
-@@ -641,6 +671,7 @@ struct sk_buff *__alloc_skb(unsigned int
+@@ -641,6 +672,7 @@ struct sk_buff *__alloc_skb(unsigned int
  		skb = kmem_cache_alloc_node(cache, gfp_mask & ~GFP_DMA, node);
  	if (unlikely(!skb))
  		return NULL;
@@ -192,7 +169,7 @@
  	prefetchw(skb);
  
  	/* We do our best to align skb_shared_info on a separate cache
-@@ -678,6 +709,7 @@ struct sk_buff *__alloc_skb(unsigned int
+@@ -678,6 +710,7 @@ struct sk_buff *__alloc_skb(unsigned int
  	return skb;
  
  nodata:
@@ -200,7 +177,7 @@
  	kmem_cache_free(cache, skb);
  	return NULL;
  }
-@@ -686,7 +718,7 @@ EXPORT_SYMBOL(__alloc_skb);
+@@ -686,7 +719,7 @@ EXPORT_SYMBOL(__alloc_skb);
  /**
   *	__netdev_alloc_skb - allocate an skbuff for rx on a specific device
   *	@dev: network device to receive on
@@ -209,7 +186,7 @@
   *	@gfp_mask: get_free_pages mask, passed to alloc_skb
   *
   *	Allocate a new &sk_buff and assign it a usage count of one. The
-@@ -696,22 +728,47 @@ EXPORT_SYMBOL(__alloc_skb);
+@@ -696,22 +729,48 @@ EXPORT_SYMBOL(__alloc_skb);
   *
   *	%NULL is returned if there is no free memory.
   */
@@ -223,7 +200,8 @@
 +	unsigned int len = length;
 +
 +#ifdef CONFIG_SKB_RECYCLER
-+	skb = skb_recycler_alloc(dev, length);
++	bool reset_skb = true;
++	skb = skb_recycler_alloc(dev, length, reset_skb);
 +	if (likely(skb)) {
 +		skb->recycled_for_ds = 0;
 +		return skb;
@@ -261,7 +239,7 @@
  		skb = __alloc_skb(len, gfp_mask, SKB_ALLOC_RX, NUMA_NO_NODE);
  		if (!skb)
  			goto skb_fail;
-@@ -747,6 +804,7 @@ struct sk_buff *__netdev_alloc_skb(struc
+@@ -747,6 +806,7 @@ struct sk_buff *__netdev_alloc_skb(struc
  	if (pfmemalloc)
  		skb->pfmemalloc = 1;
  	skb->head_frag = 1;
@@ -269,7 +247,7 @@
  
  skb_success:
  	skb_reserve(skb, NET_SKB_PAD);
-@@ -757,6 +815,60 @@ skb_fail:
+@@ -757,6 +817,61 @@ skb_fail:
  }
  EXPORT_SYMBOL(__netdev_alloc_skb);
  
@@ -297,8 +275,9 @@
 +{
 +	struct sk_buff *skb;
 +	unsigned int len = length;
++	bool reset_skb = false;
 +
-+	skb = skb_recycler_alloc(dev, length);
++	skb = skb_recycler_alloc(dev, length, reset_skb);
 +	if (likely(skb)) {
 +		skb->fast_recycled = 0;
 +		return skb;
@@ -330,7 +309,7 @@
  /**
   *	__napi_alloc_skb - allocate skbuff for rx in a specific NAPI instance
   *	@napi: napi instance this buffer was allocated for
-@@ -975,7 +1087,7 @@ static void skb_free_head(struct sk_buff
+@@ -975,7 +1090,7 @@ static void skb_free_head(struct sk_buff
  	}
  }
  
@@ -339,7 +318,7 @@
  			     bool napi_safe)
  {
  	struct skb_shared_info *shinfo = skb_shinfo(skb);
-@@ -1018,12 +1130,13 @@ exit:
+@@ -1018,12 +1133,13 @@ exit:
  /*
   *	Free an skbuff by memory without cleaning the state.
   */
@@ -354,7 +333,7 @@
  		kmem_cache_free(skbuff_cache, skb);
  		return;
  
-@@ -1044,7 +1157,9 @@ static void kfree_skbmem(struct sk_buff
+@@ -1044,7 +1160,9 @@ static void kfree_skbmem(struct sk_buff
  	}
  	if (!refcount_dec_and_test(&fclones->fclone_ref))
  		return;
@@ -364,7 +343,7 @@
  	kmem_cache_free(skbuff_fclone_cache, fclones);
  }
  
-@@ -1282,7 +1397,6 @@ void skb_tx_error(struct sk_buff *skb)
+@@ -1282,7 +1400,6 @@ void skb_tx_error(struct sk_buff *skb)
  }
  EXPORT_SYMBOL(skb_tx_error);
  
@@ -372,7 +351,7 @@
  /**
   *	consume_skb - free an skbuff
   *	@skb: buffer to free
-@@ -1291,18 +1405,93 @@ EXPORT_SYMBOL(skb_tx_error);
+@@ -1291,18 +1408,93 @@ EXPORT_SYMBOL(skb_tx_error);
   *	Functions identically to kfree_skb, but kfree_skb assumes that the frame
   *	is being dropped after a failure and notes that
   */
@@ -467,7 +446,7 @@
   *	__consume_stateless_skb - free an skbuff, assuming it is stateless
   *	@skb: buffer to free
   *
-@@ -1401,6 +1590,12 @@ static void __copy_skb_header(struct sk_
+@@ -1401,6 +1593,12 @@ static void __copy_skb_header(struct sk_
  	new->queue_mapping = old->queue_mapping;
  
  	memcpy(&new->headers, &old->headers, sizeof(new->headers));
@@ -480,15 +459,7 @@
  	CHECK_SKB_FIELD(protocol);
  	CHECK_SKB_FIELD(csum);
  	CHECK_SKB_FIELD(hash);
-@@ -1429,7 +1626,6 @@ static void __copy_skb_header(struct sk_
- #ifdef CONFIG_NET_SCHED
- 	CHECK_SKB_FIELD(tc_index);
- #endif
--
- }
- 
- /*
-@@ -1928,6 +2122,7 @@ struct sk_buff *skb_clone(struct sk_buff
+@@ -1928,6 +2126,7 @@ struct sk_buff *skb_clone(struct sk_buff
  		n = kmem_cache_alloc(skbuff_cache, gfp_mask);
  		if (!n)
  			return NULL;
@@ -496,7 +467,7 @@
  
  		n->fclone = SKB_FCLONE_UNAVAILABLE;
  	}
-@@ -2173,6 +2368,13 @@ int pskb_expand_head(struct sk_buff *skb
+@@ -2173,6 +2372,13 @@ int pskb_expand_head(struct sk_buff *skb
  	if (!skb->sk || skb->destructor == sock_edemux)
  		skb->truesize += size - osize;
  
@@ -510,7 +481,7 @@
  	return 0;
  
  nofrags:
-@@ -4865,6 +5067,11 @@ static void skb_extensions_init(void) {}
+@@ -4865,6 +5071,11 @@ static void skb_extensions_init(void) {}
  
  void __init skb_init(void)
  {
@@ -522,7 +493,7 @@
  	skbuff_cache = kmem_cache_create_usercopy("skbuff_head_cache",
  					      sizeof(struct sk_buff),
  					      0,
-@@ -4890,6 +5097,7 @@ void __init skb_init(void)
+@@ -4890,6 +5101,7 @@ void __init skb_init(void)
  						SKB_SMALL_HEAD_HEADROOM,
  						NULL);
  	skb_extensions_init();
@@ -530,7 +501,7 @@
  }
  
  static int
-@@ -5752,6 +5960,7 @@ void kfree_skb_partial(struct sk_buff *s
+@@ -5752,6 +5964,7 @@ void kfree_skb_partial(struct sk_buff *s
  {
  	if (head_stolen) {
  		skb_release_head_state(skb);
@@ -548,6 +519,24 @@
  
  static DEFINE_SPINLOCK(ptype_lock);
  struct list_head ptype_base[PTYPE_HASH_SIZE] __read_mostly;
+@@ -6015,10 +6016,16 @@ static int process_backlog(struct napi_s
+ 
+ 	napi->weight = READ_ONCE(dev_rx_weight);
+ 	while (again) {
+-		struct sk_buff *skb;
++		struct sk_buff *skb, *next_skb;
+ 
+ 		while ((skb = __skb_dequeue(&sd->process_queue))) {
+ 			rcu_read_lock();
++
++			next_skb = skb_peek(&sd->process_queue);
++			if (likely(next_skb)) {
++				prefetch(next_skb->data);
++			}
++
+ 			__netif_receive_skb(skb);
+ 			rcu_read_unlock();
+ 			input_queue_head_incr(sd);
 --- a/net/Kconfig
 +++ b/net/Kconfig
 @@ -369,6 +369,45 @@ config NET_FLOW_LIMIT
