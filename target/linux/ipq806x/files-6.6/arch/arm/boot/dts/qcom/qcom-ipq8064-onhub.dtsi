@@ -412,9 +412,11 @@
 
 	cs-gpios = <&qcom_pinmux 57 GPIO_ACTIVE_HIGH>;
 
-	dmas = <&adm_dma 8 0xb>,
-	       <&adm_dma 7 0x14>;
+	dmas = <&adm_dma 8>,
+	       <&adm_dma 7>;
 	dma-names = "rx", "tx";
+	qcom,rx-crci = <11>;
+	qcom,tx-crci = <20>;
 
 	/*
 	 * This "spidev" was included in the manufacturer device tree. I suspect
