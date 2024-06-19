@@ -4,6 +4,7 @@
  */
 
 #include "qcom-ipq8064-smb208.dtsi"
+#include "qcom-ipq8064-nss.dtsi"
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/soc/qcom,tcsr.h>
@@ -301,9 +302,20 @@
 
 &gmac0 {
 	status = "okay";
+	compatible = "qcom,nss-gmac", "qcom,ipq806x-gmac", "snps,dwmac";
+
 	phy-mode = "rgmii";
 	qcom,id = <0>;
 	phy-handle = <&phy1>;
+	qcom,pcs-chanid = <0>;
+	qcom,phy-mdio-addr = <1>;	/* phy1 eth0 */
+	qcom,rgmii-delay = <0>;		/* should be 0 in chromiumos (old) gmac */
+	qcom,poll-required = <1>;	/* enable polling */
+	qcom,forced-speed = <1000>;	/* Force speed 1G */
+	qcom,forced-duplex = <1>;	/* Force duplex FD */
+	qcom,socver = <0>;
+	local-mac-address = [00 00 00 00 00 00]; /* replaced by bootloader */
+	mdiobus = <&mdio>;
 
 	pinctrl-0 = <&rgmii0_pins>;
 	pinctrl-names = "default";
@@ -316,9 +328,20 @@
 
 &gmac2 {
 	status = "okay";
+	compatible = "qcom,nss-gmac", "qcom,ipq806x-gmac", "snps,dwmac";
+
 	phy-mode = "sgmii";
 	qcom,id = <2>;
 	phy-handle = <&phy0>;
+	qcom,pcs-chanid = <1>;
+	qcom,phy-mdio-addr = <0>;	/* phy0 eth1 */
+	qcom,rgmii-delay = <0>;
+	qcom,poll-required = <0>;	/* no polling */
+	qcom,forced-speed = <1000>;	/* Force speed 1G */
+	qcom,forced-duplex = <1>;	/* Force duplex FD */
+	qcom,socver = <0>;
+	local-mac-address = [00 00 00 00 00 00]; /* replaced by bootloader */
+	mdiobus = <&mdio>;
 
 	fixed-link {
 		speed = <1000>;
