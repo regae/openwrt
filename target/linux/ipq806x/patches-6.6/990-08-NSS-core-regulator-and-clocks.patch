@@ -1,30 +1,79 @@
-refs: linux-msm
-db30db7d342f
-42924e528bb6
---- a/include/dt-bindings/clock/qcom,gcc-ipq806x.h
-+++ b/include/dt-bindings/clock/qcom,gcc-ipq806x.h
-@@ -283,6 +283,7 @@
- #define EBI2_AON_CLK				281
- #define NSSTCM_CLK_SRC				282
- #define NSSTCM_CLK				283
-+#define NSS_CORE_CLK				284 /* Virtual */
- #define CE5_A_CLK_SRC				285
- #define CE5_H_CLK_SRC				286
- #define CE5_CORE_CLK_SRC			287
+--- a/drivers/clk/qcom/Makefile
++++ b/drivers/clk/qcom/Makefile
+@@ -31,6 +31,7 @@ obj-$(CONFIG_IPQ_GCC_806X) += gcc-ipq806
+ obj-$(CONFIG_IPQ_GCC_8074) += gcc-ipq8074.o
+ obj-$(CONFIG_IPQ_GCC_9574) += gcc-ipq9574.o
+ obj-$(CONFIG_IPQ_LCC_806X) += lcc-ipq806x.o
++obj-$(CONFIG_IPQ_GCC_806X) += nss-volt-ipq806x.o
+ obj-$(CONFIG_MDM_GCC_9607) += gcc-mdm9607.o
+ obj-$(CONFIG_MDM_GCC_9615) += gcc-mdm9615.o
+ obj-$(CONFIG_MSM_GCC_8660) += gcc-msm8660.o
+--- a/drivers/clk/qcom/clk-rcg.c
++++ b/drivers/clk/qcom/clk-rcg.c
+@@ -818,6 +818,11 @@ static int clk_dyn_rcg_set_rate_and_pare
+ 	return __clk_dyn_rcg_set_rate(hw, rate);
+ }
+ 
++void clk_dyn_configure_bank(struct clk_dyn_rcg *rcg, const struct freq_tbl *f)
++{
++	configure_bank(rcg, f);
++}
++
+ const struct clk_ops clk_rcg_ops = {
+ 	.enable = clk_enable_regmap,
+ 	.disable = clk_disable_regmap,
+--- a/drivers/clk/qcom/clk-rcg.h
++++ b/drivers/clk/qcom/clk-rcg.h
+@@ -189,4 +189,7 @@ struct clk_rcg_dfs_data {
+ extern int qcom_cc_register_rcg_dfs(struct regmap *regmap,
+ 				    const struct clk_rcg_dfs_data *rcgs,
+ 				    size_t len);
++
++extern void clk_dyn_configure_bank(struct clk_dyn_rcg *rcg,
++					const struct freq_tbl *f);
+ #endif
 --- a/drivers/clk/qcom/gcc-ipq806x.c
 +++ b/drivers/clk/qcom/gcc-ipq806x.c
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ /*
+- * Copyright (c) 2014, The Linux Foundation. All rights reserved.
++ * Copyright (c) 2014, 2016, The Linux Foundation. All rights reserved.
+  */
+ 
+ #include <linux/kernel.h>
 @@ -24,6 +24,10 @@
  #include "clk-branch.h"
  #include "clk-hfpll.h"
  #include "reset.h"
-+#include <linux/regulator/nss-volt-ipq806x.h>
++#include "nss-volt-ipq806x.h"
 +
 +/* NSS safe parent index which will be used during NSS PLL rate change */
 +static int gcc_ipq806x_nss_safe_parent;
  
  static const struct clk_parent_data gcc_pxo[] = {
  	{ .fw_name = "pxo", .name = "pxo" },
-@@ -3061,6 +3065,139 @@ static struct clk_branch ce5_h_clk = {
+@@ -2825,7 +2829,8 @@ static struct clk_dyn_rcg ubi32_core1_sr
+ 			.parent_data = gcc_pxo_pll8_pll14_pll18_pll0,
+ 			.num_parents = ARRAY_SIZE(gcc_pxo_pll8_pll14_pll18_pll0),
+ 			.ops = &clk_dyn_rcg_ops,
+-			.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE,
++			.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE |
++				 CLK_IGNORE_UNUSED,
+ 		},
+ 	},
+ };
+@@ -2878,7 +2883,8 @@ static struct clk_dyn_rcg ubi32_core2_sr
+ 			.parent_data = gcc_pxo_pll8_pll14_pll18_pll0,
+ 			.num_parents = ARRAY_SIZE(gcc_pxo_pll8_pll14_pll18_pll0),
+ 			.ops = &clk_dyn_rcg_ops,
+-			.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE,
++			.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE |
++				 CLK_IGNORE_UNUSED,
+ 		},
+ 	},
+ };
+@@ -3063,6 +3069,145 @@ static struct clk_branch ce5_h_clk = {
  	},
  };
  
@@ -141,6 +190,11 @@ db30db7d342f
 +	return clk_dyn_rcg_ops.set_parent(&ubi32_core2_src_clk.clkr.hw, i);
 +}
 +
++static struct clk_hw *nss_core_clk_get_safe_parent(struct clk_hw *hw)
++{
++	return clk_hw_get_parent_by_index(hw, gcc_ipq806x_nss_safe_parent);
++}
++
 +static const struct clk_ops clk_ops_nss_core = {
 +	.set_rate = nss_core_clk_set_rate,
 +	.set_rate_and_parent = nss_core_clk_set_rate_and_parent,
@@ -148,6 +202,7 @@ db30db7d342f
 +	.recalc_rate = nss_core_clk_recalc_rate,
 +	.get_parent = nss_core_clk_get_parent,
 +	.set_parent = nss_core_clk_set_parent,
++	.get_safe_parent = nss_core_clk_get_safe_parent,
 +};
 +
 +/* Virtual clock for nss core clocks */
@@ -164,7 +219,7 @@ db30db7d342f
  static struct clk_regmap *gcc_ipq806x_clks[] = {
  	[PLL0] = &pll0.clkr,
  	[PLL0_VOTE] = &pll0_vote,
-@@ -3180,6 +3317,7 @@ static struct clk_regmap *gcc_ipq806x_cl
+@@ -3182,6 +3327,7 @@ static struct clk_regmap *gcc_ipq806x_cl
  	[UBI32_CORE2_CLK_SRC] = &ubi32_core2_src_clk.clkr,
  	[NSSTCM_CLK_SRC] = &nss_tcm_src.clkr,
  	[NSSTCM_CLK] = &nss_tcm_clk.clkr,
@@ -172,7 +227,7 @@ db30db7d342f
  	[PLL9] = &hfpll0.clkr,
  	[PLL10] = &hfpll1.clkr,
  	[PLL12] = &hfpll_l2.clkr,
-@@ -3400,6 +3538,12 @@ static int gcc_ipq806x_probe(struct plat
+@@ -3402,6 +3548,12 @@ static int gcc_ipq806x_probe(struct plat
  	if (!regmap)
  		return -ENODEV;
  
@@ -185,58 +240,31 @@ db30db7d342f
  	/* Setup PLL18 static bits */
  	regmap_update_bits(regmap, 0x31a4, 0xffffffc0, 0x40000400);
  	regmap_write(regmap, 0x31b0, 0x3080);
---- a/drivers/clk/qcom/clk-rcg.c
-+++ b/drivers/clk/qcom/clk-rcg.c
-@@ -818,6 +818,11 @@ static int clk_dyn_rcg_set_rate_and_pare
- 	return __clk_dyn_rcg_set_rate(hw, rate);
- }
+--- a/include/dt-bindings/clock/qcom,gcc-ipq806x.h
++++ b/include/dt-bindings/clock/qcom,gcc-ipq806x.h
+@@ -1,6 +1,6 @@
+ /* SPDX-License-Identifier: GPL-2.0-only */
+ /*
+- * Copyright (c) 2014, The Linux Foundation. All rights reserved.
++ * Copyright (c) 2014, 2016 The Linux Foundation. All rights reserved.
+  */
  
-+void clk_dyn_configure_bank(struct clk_dyn_rcg *rcg, const struct freq_tbl *f)
-+{
-+	configure_bank(rcg, f);
-+}
-+
- const struct clk_ops clk_rcg_ops = {
- 	.enable = clk_enable_regmap,
- 	.disable = clk_disable_regmap,
---- a/drivers/clk/qcom/clk-rcg.h
-+++ b/drivers/clk/qcom/clk-rcg.h
-@@ -184,4 +184,7 @@ struct clk_rcg_dfs_data {
- extern int qcom_cc_register_rcg_dfs(struct regmap *regmap,
- 				    const struct clk_rcg_dfs_data *rcgs,
- 				    size_t len);
-+ 
-+extern void clk_dyn_configure_bank(struct clk_dyn_rcg *rcg,
-+					const struct freq_tbl *f);
- #endif
---- a/drivers/regulator/Kconfig
-+++ b/drivers/regulator/Kconfig
-@@ -1423,4 +1423,11 @@ config REGULATOR_QCOM_LABIBB
- 	  boost regulator and IBB can be used as a negative boost regulator
- 	  for LCD display panel.
- 
-+config REGULATOR_NSS_VOLT
-+	bool "Qualcomm IPQ806X NSS Voltage regulator"
-+	depends on ARCH_QCOM || COMPILE_TEST
-+	help
-+	  This driver provides support for the Qualcomm IPQ806X NSS Voltage
-+	  regulator.
-+
- endif
---- a/drivers/regulator/Makefile
-+++ b/drivers/regulator/Makefile
-@@ -171,5 +171,6 @@ obj-$(CONFIG_REGULATOR_WM831X) += wm831x
- obj-$(CONFIG_REGULATOR_WM8350) += wm8350-regulator.o
- obj-$(CONFIG_REGULATOR_WM8400) += wm8400-regulator.o
- obj-$(CONFIG_REGULATOR_WM8994) += wm8994-regulator.o
-+obj-$(CONFIG_REGULATOR_NSS_VOLT) += nss-volt-ipq806x.o
- 
- ccflags-$(CONFIG_REGULATOR_DEBUG) += -DDEBUG
+ #ifndef _DT_BINDINGS_CLK_GCC_IPQ806X_H
+@@ -282,7 +282,8 @@
+ #define UBI32_CORE2_CLK				280
+ #define EBI2_AON_CLK				281
+ #define NSSTCM_CLK_SRC				282
+-#define NSSTCM_CLK				283
++#define NSSTCM_CLK					283
++#define NSS_CORE_CLK				284 /* Virtual */
+ #define CE5_A_CLK_SRC				285
+ #define CE5_H_CLK_SRC				286
+ #define CE5_CORE_CLK_SRC			287
 --- /dev/null
-+++ b/drivers/regulator/nss-volt-ipq806x.c
-@@ -0,0 +1,145 @@
++++ b/drivers/clk/qcom/nss-volt-ipq806x.c
+@@ -0,0 +1,125 @@
 +/*
-+ * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
++ * Copyright (c) 2016, The Linux Foundation. All rights reserved.
 + *
 + * Permission to use, copy, modify, and/or distribute this software for any
 + * purpose with or without fee is hereby granted, provided that the above
@@ -257,113 +285,93 @@ db30db7d342f
 +#include <linux/module.h>
 +#include <linux/of.h>
 +#include <linux/of_device.h>
-+#include <linux/regulator/nss-volt-ipq806x.h>
++#include "nss-volt-ipq806x.h"
 +
-+struct nss_data {
-+	struct regulator *nss_reg;
-+	u32 nss_core_vdd_nominal;
-+	u32 nss_core_vdd_high;
-+	u32 nss_core_threshold_freq;
-+};
++static struct regulator *nss_reg;
++static u32 nss_core_vdd_nominal;
++static u32 nss_core_vdd_high;
++static u32 nss_core_threshold_freq;
 +
-+static struct nss_data *data;
++static int get_required_vdd_nss_core(unsigned long rate)
++{
++	if (rate >= nss_core_threshold_freq)
++		return nss_core_vdd_high;
++	else
++		return nss_core_vdd_nominal;
++}
 +
 +int nss_ramp_voltage(unsigned long rate, bool ramp_up)
 +{
-+	int ret;
-+	int curr_uV, uV;
-+	struct regulator *reg;
++	int ret = 0, curr_uV, uV;
 +
-+	if (!data) {
-+		pr_err("NSS core regulator not init.\n");
-+		return -ENODEV;
-+	}
-+
-+	reg = data->nss_reg;
-+
-+	if (!reg) {
++	if (!nss_reg) {
 +		pr_err("NSS core regulator not found.\n");
-+		return -EINVAL;
++		return -1;
 +	}
 +
-+	uV = data->nss_core_vdd_nominal;
-+	if (rate >= data->nss_core_threshold_freq)
-+		return data->nss_core_vdd_high;
-+
-+	curr_uV = regulator_get_voltage(reg);
++	uV = get_required_vdd_nss_core(rate);
++	curr_uV = regulator_get_voltage(nss_reg);
 +
 +	if (ramp_up) {
-+		if (uV <= curr_uV)
-+			return 0;
-+	} else {
-+		if (uV >= curr_uV)
-+			return 0;
++		if (uV > curr_uV) {
++			ret = regulator_set_voltage(nss_reg, uV,
++							nss_core_vdd_high);
++		if (ret)
++			pr_err("NSS volt scaling failed (%d)\n", uV);
 +	}
-+
-+	ret = regulator_set_voltage(reg, uV, data->nss_core_vdd_high);
-+	if (ret)
-+		pr_err("NSS volt scaling failed (%d)\n", uV);
++	} else {
++		if (uV < curr_uV) {
++			ret = regulator_set_voltage(nss_reg, uV,
++							nss_core_vdd_high);
++		if (ret)
++			pr_err("NSS volt scaling failed (%d)\n", uV);
++		}
++	}
 +
 +	return ret;
 +}
 +
 +static const struct of_device_id nss_ipq806x_match_table[] = {
 +	{ .compatible = "qcom,nss-common" },
-+	{}
++	{ }
 +};
 +
-+static int nss_volt_ipq806x_probe(struct platform_device *pdev)
++static int nss_ipq806x_probe(struct platform_device *pdev)
 +{
 +	struct device_node *np = pdev->dev.of_node;
-+	int ret;
 +
 +	if (!np)
 +		return -ENODEV;
 +
-+	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
-+	if (!data)
-+		return -ENOMEM;
-+
-+	data->nss_reg = devm_regulator_get(&pdev->dev, "nss_core");
-+	ret = PTR_ERR_OR_ZERO(data->nss_reg);
-+	if (ret) {
-+		if (ret == -EPROBE_DEFER)
-+			dev_dbg(&pdev->dev,
-+				"nss_core regulator not ready, retry\n");
-+		else
-+			dev_err(&pdev->dev, "no regulator for nss_core: %d\n",
-+				ret);
-+
-+		return ret;
-+	}
++	nss_reg = regulator_get(&pdev->dev, "nss_core");
++	if (PTR_ERR(nss_reg) == -EPROBE_DEFER)
++		return -EPROBE_DEFER;
 +
 +	if (of_property_read_u32(np, "nss_core_vdd_nominal",
-+				 &data->nss_core_vdd_nominal)) {
-+		pr_warn("NSS core vdd nominal not found. Using defaults...\n");
-+		data->nss_core_vdd_nominal = 1100000;
++					&nss_core_vdd_nominal)) {
++		pr_err("NSS core vdd nominal not found. Using defaults...\n");
++		nss_core_vdd_nominal = 1100000;
 +	}
 +
 +	if (of_property_read_u32(np, "nss_core_vdd_high",
-+				 &data->nss_core_vdd_high)) {
-+		pr_warn("NSS core vdd high not found. Using defaults...\n");
-+		data->nss_core_vdd_high = 1150000;
++					&nss_core_vdd_high)) {
++		pr_err("NSS core vdd high not found. Using defaults...\n");
++		nss_core_vdd_high = 1150000;
 +	}
 +
 +	if (of_property_read_u32(np, "nss_core_threshold_freq",
-+				 &data->nss_core_threshold_freq)) {
-+		pr_warn("NSS core thres freq not found. Using defaults...\n");
-+		data->nss_core_threshold_freq = 733000000;
++					&nss_core_threshold_freq)) {
++		pr_err("NSS core thres freq not found. Using defaults...\n");
++		nss_core_threshold_freq = 733000000;
 +	}
-+
-+	platform_set_drvdata(pdev, data);
 +
 +	return 0;
 +}
 +
 +static struct platform_driver nss_ipq806x_driver = {
-+	.probe          = nss_volt_ipq806x_probe,
++	.probe          = nss_ipq806x_probe,
 +	.driver         = {
-+		.name   = "nss-volt-ipq806x",
++		.name   = "nss-common-ipq806x",
 +		.owner  = THIS_MODULE,
 +		.of_match_table = nss_ipq806x_match_table,
 +	},
@@ -373,7 +381,7 @@ db30db7d342f
 +{
 +	return platform_driver_register(&nss_ipq806x_driver);
 +}
-+late_initcall(nss_ipq806x_init);
++device_initcall(nss_ipq806x_init);
 +
 +static void __exit nss_ipq806x_exit(void)
 +{
@@ -381,10 +389,10 @@ db30db7d342f
 +}
 +module_exit(nss_ipq806x_exit);
 --- /dev/null
-+++ b/include/linux/regulator/nss-volt-ipq806x.h
++++ b/drivers/clk/qcom/nss-volt-ipq806x.h
 @@ -0,0 +1,24 @@
 +/*
-+ * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
++ * Copyright (c) 2016, The Linux Foundation. All rights reserved.
 + *
 + * Permission to use, copy, modify, and/or distribute this software for any
 + * purpose with or without fee is hereby granted, provided that the above
