@@ -51,7 +51,7 @@
  
  	obj_size = kmalloc_size_roundup(obj_size);
  	/* The following cast might truncate high-order bits of obj_size, this
-@@ -1070,9 +1092,11 @@ static bool skb_pp_recycle(struct sk_buf
+@@ -1072,9 +1094,11 @@ static bool skb_pp_recycle(struct sk_buf
  
  static void skb_kfree_head(void *head, unsigned int end_offset)
  {
@@ -63,7 +63,7 @@
  		kfree(head);
  }
  
-@@ -2428,6 +2452,7 @@ int __skb_unclone_keeptruesize(struct sk
+@@ -2430,6 +2454,7 @@ int __skb_unclone_keeptruesize(struct sk
  	if (likely(skb_end_offset(skb) == saved_end_offset))
  		return 0;
  
@@ -71,7 +71,7 @@
  	/* We can not change skb->end if the original or new value
  	 * is SKB_SMALL_HEAD_HEADROOM, as it might break skb_kfree_head().
  	 */
-@@ -2441,6 +2466,7 @@ int __skb_unclone_keeptruesize(struct sk
+@@ -2443,6 +2468,7 @@ int __skb_unclone_keeptruesize(struct sk
  		WARN_ON_ONCE(1);
  		return 0;
  	}
@@ -79,7 +79,7 @@
  
  	shinfo = skb_shinfo(skb);
  
-@@ -5093,6 +5119,7 @@ void __init skb_init(void)
+@@ -5095,6 +5121,7 @@ void __init skb_init(void)
  	 * struct skb_shared_info is located at the end of skb->head,
  	 * and should not be copied to/from user.
  	 */
@@ -87,7 +87,7 @@
  	skb_small_head_cache = kmem_cache_create_usercopy("skbuff_small_head",
  						SKB_SMALL_HEAD_CACHE_SIZE,
  						0,
-@@ -5100,6 +5127,7 @@ void __init skb_init(void)
+@@ -5102,6 +5129,7 @@ void __init skb_init(void)
  						0,
  						SKB_SMALL_HEAD_HEADROOM,
  						NULL);

@@ -511,7 +511,7 @@
  		__kfree_skb(skb);
 --- a/net/core/dev.c
 +++ b/net/core/dev.c
-@@ -156,6 +156,7 @@
+@@ -157,6 +157,7 @@
  
  #include "dev.h"
  #include "net-sysfs.h"
@@ -519,7 +519,7 @@
  
  static DEFINE_SPINLOCK(ptype_lock);
  struct list_head ptype_base[PTYPE_HASH_SIZE] __read_mostly;
-@@ -6015,10 +6016,16 @@ static int process_backlog(struct napi_s
+@@ -6042,10 +6043,16 @@ static int process_backlog(struct napi_s
  
  	napi->weight = READ_ONCE(dev_rx_weight);
  	while (again) {

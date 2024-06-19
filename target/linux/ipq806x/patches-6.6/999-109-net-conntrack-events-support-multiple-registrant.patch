@@ -235,7 +235,7 @@ index 6fba74b5aaf79..f147e2a305528 100644
  void nf_conntrack_register_notifier(struct net *net,
  				    const struct nf_ct_event_notifier *new)
  {
-@@ -269,8 +327,16 @@ void nf_conntrack_register_notifier(stru
+@@ -270,8 +328,16 @@ void nf_conntrack_register_notifier(stru
  	rcu_assign_pointer(net->ct.nf_conntrack_event_cb, new);
  	mutex_unlock(&nf_ct_ecache_mutex);
  }
@@ -252,7 +252,7 @@ index 6fba74b5aaf79..f147e2a305528 100644
  void nf_conntrack_unregister_notifier(struct net *net)
  {
  	mutex_lock(&nf_ct_ecache_mutex);
-@@ -278,6 +344,7 @@ void nf_conntrack_unregister_notifier(st
+@@ -279,6 +345,7 @@ void nf_conntrack_unregister_notifier(st
  	mutex_unlock(&nf_ct_ecache_mutex);
  	/* synchronize_rcu() is called after netns pre_exit */
  }

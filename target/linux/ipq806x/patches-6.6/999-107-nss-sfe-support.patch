@@ -19,7 +19,7 @@
  	__u16			tc_index;	/* traffic control index */
 --- a/net/core/dev.c
 +++ b/net/core/dev.c
-@@ -2071,6 +2071,9 @@ static int call_netdevice_notifiers_mtu(
+@@ -2097,6 +2097,9 @@ static int call_netdevice_notifiers_mtu(
  	return call_netdevice_notifiers_info(val, &info.info);
  }
  
@@ -29,7 +29,7 @@
  #ifdef CONFIG_NET_INGRESS
  static DEFINE_STATIC_KEY_FALSE(ingress_needed_key);
  
-@@ -3569,8 +3572,13 @@ static int xmit_one(struct sk_buff *skb,
+@@ -3595,8 +3598,13 @@ static int xmit_one(struct sk_buff *skb,
  	unsigned int len;
  	int rc;
  
@@ -45,7 +45,7 @@
  
  #ifdef CONFIG_ETHERNET_PACKET_MANGLE
  	if (dev->eth_mangle_tx && !(skb = dev->eth_mangle_tx(dev, skb)))
-@@ -3593,7 +3601,6 @@ struct sk_buff *dev_hard_start_xmit(stru
+@@ -3619,7 +3627,6 @@ struct sk_buff *dev_hard_start_xmit(stru
  
  	while (skb) {
  		struct sk_buff *next = skb->next;
@@ -53,7 +53,7 @@
  		skb_mark_not_on_list(skb);
  		rc = xmit_one(skb, dev, txq, next != NULL);
  		if (unlikely(!dev_xmit_complete(rc))) {
-@@ -3780,6 +3787,60 @@ static int dev_qdisc_enqueue(struct sk_b
+@@ -3806,6 +3813,60 @@ static int dev_qdisc_enqueue(struct sk_b
  	return rc;
  }
  
@@ -114,7 +114,7 @@
  static inline int __dev_xmit_skb(struct sk_buff *skb, struct Qdisc *q,
  				 struct net_device *dev,
  				 struct netdev_queue *txq)
-@@ -4262,6 +4323,148 @@ struct netdev_queue *netdev_core_pick_tx
+@@ -4288,6 +4349,148 @@ struct netdev_queue *netdev_core_pick_tx
  	return netdev_get_tx_queue(dev, queue_index);
  }
  
@@ -263,7 +263,7 @@
  /**
   * __dev_queue_xmit() - transmit a buffer
   * @skb:	buffer to transmit
-@@ -5309,6 +5512,9 @@ void netdev_rx_handler_unregister(struct
+@@ -5346,6 +5559,9 @@ void netdev_rx_handler_unregister(struct
  }
  EXPORT_SYMBOL_GPL(netdev_rx_handler_unregister);
  
@@ -273,7 +273,7 @@
  /*
   * Limit the use of PFMEMALLOC reserves to those protocols that implement
   * the special handling of PFMEMALLOC skbs.
-@@ -5356,6 +5562,7 @@ static int __netif_receive_skb_core(stru
+@@ -5403,6 +5609,7 @@ static int __netif_receive_skb_core(stru
  	bool deliver_exact = false;
  	int ret = NET_RX_DROP;
  	__be16 type;
@@ -281,7 +281,7 @@
  
  	net_timestamp_check(!READ_ONCE(netdev_tstamp_prequeue), skb);
  
-@@ -5394,6 +5601,16 @@ another_round:
+@@ -5441,6 +5648,16 @@ another_round:
  			goto out;
  	}
  
@@ -298,7 +298,7 @@
  	if (skb_skip_tc_classify(skb))
  		goto skip_classify;
  
-@@ -5432,6 +5649,7 @@ skip_taps:
+@@ -5479,6 +5696,7 @@ skip_taps:
  #endif
  	skb_reset_redirect(skb);
  skip_classify:
@@ -306,7 +306,7 @@
  	if (pfmemalloc && !skb_pfmemalloc_protocol(skb))
  		goto drop;
  
-@@ -5446,6 +5664,24 @@ skip_classify:
+@@ -5493,6 +5711,24 @@ skip_classify:
  			goto out;
  	}
  
@@ -333,15 +333,15 @@
  		if (pt_prev) {
 --- a/net/core/skbuff.c
 +++ b/net/core/skbuff.c
-@@ -843,6 +843,7 @@ struct sk_buff *__netdev_alloc_skb_no_sk
- 	skb = skb_recycler_alloc(dev, length);
+@@ -846,6 +846,7 @@ struct sk_buff *__netdev_alloc_skb_no_sk
+ 	skb = skb_recycler_alloc(dev, length, reset_skb);
  	if (likely(skb)) {
  		skb->fast_recycled = 0;
 +		skb->fast_qdisc = 0;
  		return skb;
  	}
  
-@@ -2374,6 +2375,7 @@ int pskb_expand_head(struct sk_buff *skb
+@@ -2378,6 +2379,7 @@ int pskb_expand_head(struct sk_buff *skb
  	skb->is_from_recycler = 0;
  	skb->fast_recycled = 0;
  	skb->recycled_for_ds = 0;
@@ -465,7 +465,7 @@
  void __qdisc_run(struct Qdisc *q)
 --- a/include/linux/netdevice.h
 +++ b/include/linux/netdevice.h
-@@ -3165,6 +3165,9 @@ u16 dev_pick_tx_cpu_id(struct net_device
+@@ -3164,6 +3164,9 @@ u16 dev_pick_tx_cpu_id(struct net_device
  u16 dev_pick_tx_cpu_id(struct net_device *dev, struct sk_buff *skb,
  		       struct net_device *sb_dev);
  

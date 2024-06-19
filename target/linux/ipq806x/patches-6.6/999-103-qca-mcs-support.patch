@@ -1,15 +1,15 @@
 --- a/net/bridge/br_device.c
 +++ b/net/bridge/br_device.c
-@@ -37,6 +37,8 @@ netdev_tx_t br_dev_xmit(struct sk_buff *
+@@ -38,6 +38,8 @@ netdev_tx_t br_dev_xmit(struct sk_buff *
  	struct net_bridge_vlan *vlan;
  	const unsigned char *dest;
  	u16 vid = 0;
 +	struct net_bridge_port *pdst;
 +	br_get_dst_hook_t *get_dst_hook;
  
- 	memset(skb->cb, 0, sizeof(struct br_input_skb_cb));
- 	br_tc_skb_miss_set(skb, false);
-@@ -79,10 +81,17 @@ netdev_tx_t br_dev_xmit(struct sk_buff *
+ 	if (unlikely(reason != SKB_NOT_DROPPED_YET)) {
+ 		kfree_skb_reason(skb, reason);
+@@ -85,10 +87,17 @@ netdev_tx_t br_dev_xmit(struct sk_buff *
  				br_do_suppress_nd(skb, br, vid, NULL, msg);
  	}
  
@@ -27,7 +27,7 @@
  		if (unlikely(netpoll_tx_running(dev))) {
  			br_flood(br, skb, BR_PKT_MULTICAST, false, true, vid);
  			goto out;
-@@ -98,11 +107,21 @@ netdev_tx_t br_dev_xmit(struct sk_buff *
+@@ -104,11 +113,21 @@ netdev_tx_t br_dev_xmit(struct sk_buff *
  			br_multicast_flood(mdst, skb, brmctx, false, true);
  		else
  			br_flood(br, skb, BR_PKT_MULTICAST, false, true, vid);
