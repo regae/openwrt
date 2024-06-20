@@ -264,7 +264,7 @@
   *	__dev_queue_xmit - transmit a buffer
   *	@skb: buffer to transmit
   *	@sb_dev: suboordinate device used for L2 forwarding offload
-@@ -5236,6 +5439,9 @@ void netdev_rx_handler_unregister(struct
+@@ -5230,6 +5433,9 @@ void netdev_rx_handler_unregister(struct
  }
  EXPORT_SYMBOL_GPL(netdev_rx_handler_unregister);
  
@@ -274,7 +274,7 @@
  /*
   * Limit the use of PFMEMALLOC reserves to those protocols that implement
   * the special handling of PFMEMALLOC skbs.
-@@ -5283,6 +5489,7 @@ static int __netif_receive_skb_core(stru
+@@ -5277,6 +5483,7 @@ static int __netif_receive_skb_core(stru
  	bool deliver_exact = false;
  	int ret = NET_RX_DROP;
  	__be16 type;
@@ -282,7 +282,7 @@
  
  	net_timestamp_check(!READ_ONCE(netdev_tstamp_prequeue), skb);
  
-@@ -5321,6 +5528,16 @@ another_round:
+@@ -5315,6 +5522,16 @@ another_round:
  			goto out;
  	}
  
@@ -299,7 +299,7 @@
  	if (skb_skip_tc_classify(skb))
  		goto skip_classify;
  
-@@ -5357,6 +5574,7 @@ skip_taps:
+@@ -5351,6 +5568,7 @@ skip_taps:
  #endif
  	skb_reset_redirect(skb);
  skip_classify:
@@ -307,7 +307,7 @@
  	if (pfmemalloc && !skb_pfmemalloc_protocol(skb))
  		goto drop;
  
-@@ -5371,6 +5589,24 @@ skip_classify:
+@@ -5365,6 +5583,24 @@ skip_classify:
  			goto out;
  	}
  
@@ -334,9 +334,9 @@
  		if (pt_prev) {
 --- a/net/core/skbuff.c
 +++ b/net/core/skbuff.c
-@@ -763,6 +763,7 @@ struct sk_buff *__netdev_alloc_skb_no_sk
- 		kmemleak_restore(skb->head, 1);
- #endif
+@@ -636,6 +636,7 @@ struct sk_buff *__netdev_alloc_skb_no_sk
+ 	skb = skb_recycler_alloc(dev, length, reset_skb);
+ 	if (likely(skb)) {
  		skb->fast_recycled = 0;
 +		skb->fast_qdisc = 0;
  		return skb;
