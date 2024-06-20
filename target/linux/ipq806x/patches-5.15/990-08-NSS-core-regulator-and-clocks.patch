@@ -261,7 +261,7 @@ db30db7d342f
  ccflags-$(CONFIG_REGULATOR_DEBUG) += -DDEBUG
 --- /dev/null
 +++ b/drivers/regulator/nss-volt-ipq806x.c
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,146 @@
 +/*
 + * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
 + *
@@ -313,9 +313,10 @@ db30db7d342f
 +		return -EINVAL;
 +	}
 +
-+	uV = data->nss_core_vdd_nominal;
 +	if (rate >= data->nss_core_threshold_freq)
-+		return data->nss_core_vdd_high;
++		uV = data->nss_core_vdd_high;
++	else
++		uV = data->nss_core_vdd_nominal;
 +
 +	curr_uV = regulator_get_voltage(reg);
 +
