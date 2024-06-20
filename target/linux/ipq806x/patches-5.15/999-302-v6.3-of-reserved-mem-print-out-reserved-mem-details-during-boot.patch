@@ -1,0 +1,47 @@
+From aeb9267eb6b1df992e39467a620da8fdf434df54 Mon Sep 17 00:00:00 2001
+From: Martin Liu <liumartin@google.com>
+Date: Fri, 10 Feb 2023 00:09:55 +0800
+Subject: [PATCH] of: reserved-mem: print out reserved-mem details during boot
+
+It's important to know reserved-mem information in mobile world
+since reserved memory via device tree keeps increased in platform
+(e.g., 45% in our platform). Therefore, it's crucial to know the
+reserved memory sizes breakdown for the memory accounting.
+
+This patch prints out reserved memory details during boot to make
+them visible.
+
+Below is an example output:
+
+[    0.000000] OF: reserved mem: 0x00000009f9400000..0x00000009fb3fffff ( 32768 KB ) map reusable test1
+[    0.000000] OF: reserved mem: 0x00000000ffdf0000..0x00000000ffffffff ( 2112 KB ) map non-reusable test2
+[    0.000000] OF: reserved mem: 0x0000000091000000..0x00000000912fffff ( 3072 KB ) nomap non-reusable test3
+
+Signed-off-by: Martin Liu <liumartin@google.com>
+Link: https://lore.kernel.org/r/20230209160954.1471909-1-liumartin@google.com
+Signed-off-by: Rob Herring <robh@kernel.org>
+---
+ drivers/of/of_reserved_mem.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/of/of_reserved_mem.c b/drivers/of/of_reserved_mem.c
+index 65f3b02a0e4edf..00e75064ca19f2 100644
+--- a/drivers/of/of_reserved_mem.c
++++ b/drivers/of/of_reserved_mem.c
+@@ -286,6 +286,16 @@ void __init fdt_init_reserved_mem(void)
+ 					memblock_clear_nomap(rmem->base, rmem->size);
+ 				else
+ 					memblock_free(rmem->base, rmem->size);
++			} else {
++				phys_addr_t end = rmem->base + rmem->size - 1;
++				bool reusable =
++					(of_get_flat_dt_prop(node, "reusable", NULL)) != NULL;
++
++				pr_info("%pa..%pa (%lu KiB) %s %s %s\n",
++					&rmem->base, &end, (unsigned long)(rmem->size / SZ_1K),
++					nomap ? "nomap" : "map",
++					reusable ? "reusable" : "non-reusable",
++					rmem->name ? rmem->name : "unknown");
+ 			}
+ 		}
+ 	}
