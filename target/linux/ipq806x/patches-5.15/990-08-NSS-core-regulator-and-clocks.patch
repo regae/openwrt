@@ -44,7 +44,7 @@ db30db7d342f
  		},
  	},
  };
-@@ -3061,6 +3067,139 @@ static struct clk_branch ce5_h_clk = {
+@@ -3061,6 +3067,145 @@ static struct clk_branch ce5_h_clk = {
  	},
  };
  
@@ -161,6 +161,11 @@ db30db7d342f
 +	return clk_dyn_rcg_ops.set_parent(&ubi32_core2_src_clk.clkr.hw, i);
 +}
 +
++static struct clk_hw *nss_core_clk_get_safe_parent(struct clk_hw *hw)
++{
++	return clk_hw_get_parent_by_index(hw, gcc_ipq806x_nss_safe_parent);
++}
++
 +static const struct clk_ops clk_ops_nss_core = {
 +	.set_rate = nss_core_clk_set_rate,
 +	.set_rate_and_parent = nss_core_clk_set_rate_and_parent,
@@ -168,6 +173,7 @@ db30db7d342f
 +	.recalc_rate = nss_core_clk_recalc_rate,
 +	.get_parent = nss_core_clk_get_parent,
 +	.set_parent = nss_core_clk_set_parent,
++	.get_safe_parent = nss_core_clk_get_safe_parent,
 +};
 +
 +/* Virtual clock for nss core clocks */
@@ -184,7 +190,7 @@ db30db7d342f
  static struct clk_regmap *gcc_ipq806x_clks[] = {
  	[PLL0] = &pll0.clkr,
  	[PLL0_VOTE] = &pll0_vote,
-@@ -3180,6 +3319,7 @@ static struct clk_regmap *gcc_ipq806x_cl
+@@ -3180,6 +3325,7 @@ static struct clk_regmap *gcc_ipq806x_cl
  	[UBI32_CORE2_CLK_SRC] = &ubi32_core2_src_clk.clkr,
  	[NSSTCM_CLK_SRC] = &nss_tcm_src.clkr,
  	[NSSTCM_CLK] = &nss_tcm_clk.clkr,
@@ -192,7 +198,7 @@ db30db7d342f
  	[PLL9] = &hfpll0.clkr,
  	[PLL10] = &hfpll1.clkr,
  	[PLL12] = &hfpll_l2.clkr,
-@@ -3400,6 +3540,12 @@ static int gcc_ipq806x_probe(struct plat
+@@ -3400,6 +3546,12 @@ static int gcc_ipq806x_probe(struct plat
  	if (!regmap)
  		return -ENODEV;
  
