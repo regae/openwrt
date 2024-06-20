@@ -24,7 +24,27 @@ db30db7d342f
  
  static const struct clk_parent_data gcc_pxo[] = {
  	{ .fw_name = "pxo", .name = "pxo" },
-@@ -3061,6 +3065,139 @@ static struct clk_branch ce5_h_clk = {
+@@ -2823,7 +2827,8 @@ static struct clk_dyn_rcg ubi32_core1_sr
+ 			.parent_data = gcc_pxo_pll8_pll14_pll18_pll0,
+ 			.num_parents = ARRAY_SIZE(gcc_pxo_pll8_pll14_pll18_pll0),
+ 			.ops = &clk_dyn_rcg_ops,
+-			.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE,
++			.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE |
++				 CLK_IGNORE_UNUSED,
+ 		},
+ 	},
+ };
+@@ -2876,7 +2881,8 @@ static struct clk_dyn_rcg ubi32_core2_sr
+ 			.parent_data = gcc_pxo_pll8_pll14_pll18_pll0,
+ 			.num_parents = ARRAY_SIZE(gcc_pxo_pll8_pll14_pll18_pll0),
+ 			.ops = &clk_dyn_rcg_ops,
+-			.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE,
++			.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE |
++				 CLK_IGNORE_UNUSED,
+ 		},
+ 	},
+ };
+@@ -3061,6 +3067,139 @@ static struct clk_branch ce5_h_clk = {
  	},
  };
  
@@ -164,7 +184,7 @@ db30db7d342f
  static struct clk_regmap *gcc_ipq806x_clks[] = {
  	[PLL0] = &pll0.clkr,
  	[PLL0_VOTE] = &pll0_vote,
-@@ -3180,6 +3317,7 @@ static struct clk_regmap *gcc_ipq806x_cl
+@@ -3180,6 +3319,7 @@ static struct clk_regmap *gcc_ipq806x_cl
  	[UBI32_CORE2_CLK_SRC] = &ubi32_core2_src_clk.clkr,
  	[NSSTCM_CLK_SRC] = &nss_tcm_src.clkr,
  	[NSSTCM_CLK] = &nss_tcm_clk.clkr,
@@ -172,7 +192,7 @@ db30db7d342f
  	[PLL9] = &hfpll0.clkr,
  	[PLL10] = &hfpll1.clkr,
  	[PLL12] = &hfpll_l2.clkr,
-@@ -3400,6 +3538,12 @@ static int gcc_ipq806x_probe(struct plat
+@@ -3400,6 +3540,12 @@ static int gcc_ipq806x_probe(struct plat
  	if (!regmap)
  		return -ENODEV;
  
