@@ -330,6 +330,7 @@ define KernelPackage/ipt-ipopt
   KCONFIG:=$(KCONFIG_IPT_IPOPT)
   FILES:=$(foreach mod,$(IPT_IPOPT-m),$(LINUX_DIR)/net/$(mod).ko)
   AUTOLOAD:=$(call AutoProbe,$(notdir $(IPT_IPOPT-m)))
+  DEPENDS+= +kmod-nf-conntrack
   $(call AddDepends/ipt)
 endef
 
