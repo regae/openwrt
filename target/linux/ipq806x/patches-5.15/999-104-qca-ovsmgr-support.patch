@@ -67,7 +67,7 @@
 +}
 +
 +/* Notify datapath port delete event to acceleration callback */
-+static void ovs_dp_port_del_notify(struct datapath *dp, struct vport *vp)
++void ovs_dp_port_del_notify(struct datapath *dp, struct vport *vp)
 +{
 +	struct ovs_accel_callback *ovs_cb;
 +
@@ -233,7 +233,7 @@
  	err = ovs_vport_cmd_fill_info(vport, reply, genl_info_net(info),
  				      info->snd_portid, info->snd_seq, 0,
  				      OVS_VPORT_CMD_DEL, GFP_KERNEL);
-@@ -2395,6 +2525,261 @@ exit_unlock_free:
+@@ -2395,6 +2525,276 @@ exit_unlock_free:
  	return err;
  }
  
@@ -461,6 +461,7 @@
 +	struct net_device *dev;
 +	const struct nlattr *a;
 +	int rem;
++	int egress_cnt = 0;
 +
 +	rcu_read_lock();
 +	flow = ovs_accel_flow_find(dp_inst, key);
@@ -477,15 +478,29 @@
 +		case OVS_ACTION_ATTR_OUTPUT:
 +			port_no = nla_get_u32(a);
 +			vport = ovs_vport_ovsl_rcu(dp, port_no);
-+			if (!vport) {
++
++			/*
++			 * Avoid offloading flows with internal port as egress port
++			 */
++			if (!vport || (vport->ops->type == OVS_VPORT_TYPE_INTERNAL)) {
 +				goto done;
 +			}
 +
 +			dev = vport->dev;
-+			rcu_read_unlock();
-+			return dev;
++			egress_cnt++;
 +		}
 +	}
++
++	/*
++	 * Return dev only if flow is not a broadcast i.e.
++	 * there is only one egress interface for the flow
++	 */
++	if (egress_cnt == 1) {
++		dev_hold(dev);
++		rcu_read_unlock();
++		return dev;
++	}
++
 +done:
 +	rcu_read_unlock();
 +	return NULL;
@@ -495,7 +510,7 @@
  static int ovs_vport_cmd_get(struct sk_buff *skb, struct genl_info *info)
  {
  	struct nlattr **a = info->attrs;
-@@ -2661,6 +3046,8 @@ static int __init dp_init(void)
+@@ -2661,6 +3061,8 @@ static int __init dp_init(void)
  
  	pr_info("Open vSwitch switching datapath\n");
  
@@ -504,7 +519,7 @@
  	err = action_fifos_init();
  	if (err)
  		goto error;
-@@ -2710,6 +3097,7 @@ error_unreg_rtnl_link:
+@@ -2710,6 +3112,7 @@ error_unreg_rtnl_link:
  error_action_fifos_exit:
  	action_fifos_exit();
  error:
@@ -552,7 +567,15 @@
  extern unsigned int ovs_net_id;
  void ovs_lock(void);
  void ovs_unlock(void);
-@@ -275,6 +306,21 @@ void ovs_dp_notify_wq(struct work_struct
+@@ -260,6 +291,7 @@ void ovs_dp_detach_port(struct vport *);
+ int ovs_dp_upcall(struct datapath *, struct sk_buff *,
+ 		  const struct sw_flow_key *, const struct dp_upcall_info *,
+ 		  uint32_t cutlen);
++void ovs_dp_port_del_notify(struct datapath *dp, struct vport *vp);
+ 
+ u32 ovs_dp_get_upcall_portid(const struct datapath *dp, uint32_t cpu_id);
+ 
+@@ -275,6 +307,21 @@ void ovs_dp_notify_wq(struct work_struct
  int action_fifos_init(void);
  void action_fifos_exit(void);
  
@@ -574,3 +597,13 @@
  /* 'KEY' must not have any bits set outside of the 'MASK' */
  #define OVS_MASKED(OLD, KEY, MASK) ((KEY) | ((OLD) & ~(MASK)))
  #define OVS_SET_MASKED(OLD, KEY, MASK) ((OLD) = OVS_MASKED(OLD, KEY, MASK))
+--- a/net/openvswitch/dp_notify.c
++++ b/net/openvswitch/dp_notify.c
+@@ -19,6 +19,7 @@ static void dp_detach_port_notify(struct
+ 	dp = vport->dp;
+ 	notify = ovs_vport_cmd_build_info(vport, ovs_dp_get_net(dp),
+ 					  0, 0, OVS_VPORT_CMD_DEL);
++	ovs_dp_port_del_notify(vport->dp, vport);
+ 	ovs_dp_detach_port(vport);
+ 	if (IS_ERR(notify)) {
+ 		genl_set_err(&dp_vport_genl_family, ovs_dp_get_net(dp), 0,
