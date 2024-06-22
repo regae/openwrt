@@ -1,6 +1,3 @@
-refs: linux-msm
-db30db7d342f
-42924e528bb6
 --- a/include/dt-bindings/clock/qcom,gcc-ipq806x.h
 +++ b/include/dt-bindings/clock/qcom,gcc-ipq806x.h
 @@ -283,6 +283,7 @@
