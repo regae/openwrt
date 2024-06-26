@@ -1,0 +1,32 @@
+#!/bin/sh
+
+[ -e /etc/config/cpufreq ] && exit 0
+
+touch /etc/config/cpufreq
+
+. /lib/functions.sh
+
+uci_set_cpufreq() {
+	uci -q set cpufreq.general="cpufreq"
+	uci -q set "cpufreq.general.governor"="$1"
+	uci -q set "cpufreq.general.minfreq"="$2"
+	[ -n "$3" ] && uci -q set "cpufreq.general.maxfreq"="$3"
+	[ "$1" = "ondemand" ] && {
+		uci -q set "cpufreq.general.sampling_down_factor"="${4:-10}"
+		uci -q set "cpufreq.general.up_threshold"="${5:-50}"
+	}
+}
+
+case "$(board_name)" in
+	asus,onhub |\
+	tplink,onhub)
+		uci_set_cpufreq ondemand 800000 1400000 10 50
+		;;
+	*)
+		uci_set_cpufreq performance 600000
+		;;
+esac
+
+uci -q commit cpufreq
+
+exit 0
