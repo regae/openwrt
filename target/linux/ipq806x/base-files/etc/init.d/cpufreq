@@ -1,38 +1,36 @@
 #!/bin/sh /etc/rc.common
 
 START=15
+USE_PROCD=1
 
-boot() {
-	local governor
+start_service() {
+	local max_freq
+	max_freq=$(awk '{print $NF}' /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies)
 
-	governor=$(cat /sys/devices/system/cpu/cpufreq/policy0/scaling_governor)
+	config_load cpufreq
+	config_get governor general governor "ondemand"
+	config_get minfreq general minfreq "600000"
+	config_get maxfreq general maxfreq "$max_freq"
+	config_get sampling_down_factor general sampling_down_factor "10"
+	config_get up_threshold general up_threshold "50"
 
-	if [ "$governor" = "ondemand" ]; then
-		# Change the minimum operating frequency for CPU0.
-		# This is required for cases where large amount of network traffic is sent
-		# instantaneously  without any ramp-up time , when CPU is at minimum perf level.
-		# At 384 MHz, CPU0 stays fully busy in softirq context and doesn't move to ksoftirqd, and
-		# doesn't give any other thread including cpufreq thread a chance to run.
-		# Hence, the CPU frequency is locked up at 384MHz till the traffic is stopped.
-		# Increasing the min frequency for CPU0 to 800 MHz (L2=1GHz), allows 4 Gbps instantaneous
-		# traffic without any hangs/lockups.
-		#
-		# CPU1 min frequency also has to be increased because there is a hardware constraint
-		# kraits cannot operate at 384MHz when L2 is at 1GHz.
-		#
-		# The impact on idle-state power with this change is about ~40-45mW.
-		echo "800000" > /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq
-		echo "800000" > /sys/devices/system/cpu/cpu1/cpufreq/scaling_min_freq
+	for f in /sys/devices/system/cpu/cpufreq/policy*; do
+		grep -q $governor "${f}/scaling_available_governors" && \
+			echo -n "$governor" > "${f}/scaling_governor"
 
-		# Change sampling rate for frequency scaling decisions to 1s, from 10 ms
-		# default 20000
-		echo "1000000" > /sys/devices/system/cpu/cpufreq/ondemand/sampling_rate
+		grep -q $minfreq "${f}/scaling_available_frequencies" && \
+			echo -n "$minfreq" > "${f}/scaling_min_freq"
 
-		# Change sampling rate for frequency down scaling decision to 10s
-		echo 10 > /sys/devices/system/cpu/cpufreq/ondemand/sampling_down_factor
+		grep -q $maxfreq "${f}/scaling_available_frequencies" && \
+			echo -n "$maxfreq" > "${f}/scaling_max_freq"
 
-		# Change the CPU load threshold above which frequency is up-scaled to
-		# turbo frequency,to 50%
-		echo 50 > /sys/devices/system/cpu/cpufreq/ondemand/up_threshold
-	fi
+		[ "$governor" = "ondemand" ] && {
+			echo -n "$sampling_down_factor" > "${f}/../ondemand/sampling_down_factor"
+			echo -n "$up_threshold" > "${f}/../ondemand/up_threshold"
+		}
+	done
+}
+
+service_triggers() {
+	procd_add_reload_trigger cpufreq
 }
