@@ -8,54 +8,9 @@
  	CPUHP_PCI_XGENE_DEAD,
  	CPUHP_IOMMU_IOVA_DEAD,
  	CPUHP_LUSTRE_CFS_DEAD,
---- a/include/linux/debugobjects.h
-+++ b/include/linux/debugobjects.h
-@@ -68,6 +68,7 @@ extern void debug_object_init      (void
- extern void
- debug_object_init_on_stack(void *addr, const struct debug_obj_descr *descr);
- extern int debug_object_activate  (void *addr, const struct debug_obj_descr *descr);
-+extern int debug_object_get_state(void *addr);
- extern void debug_object_deactivate(void *addr, const struct debug_obj_descr *descr);
- extern void debug_object_destroy   (void *addr, const struct debug_obj_descr *descr);
- extern void debug_object_free      (void *addr, const struct debug_obj_descr *descr);
-@@ -85,6 +86,7 @@ debug_object_active_state(void *addr, co
- extern void debug_objects_early_init(void);
- extern void debug_objects_mem_init(void);
- #else
-+static inline int debug_object_get_state(void *addr) { return 0; }
- static inline void
- debug_object_init      (void *addr, const struct debug_obj_descr *descr) { }
- static inline void
 --- a/include/linux/skbuff.h
 +++ b/include/linux/skbuff.h
-@@ -917,6 +917,12 @@ struct sk_buff {
- #endif
- 	__u8			slow_gro:1;
- 	__u8			scm_io_uring:1;
-+	/* Flag to check if skb is allocated from recycler */
-+	__u8			is_from_recycler:1;
-+	/* Flag for fast recycle in fast xmit path */
-+	__u8			fast_recycled:1;
-+	/* Flag for recycle in PPE DS */
-+	__u8			recycled_for_ds:1;
- 
- #ifdef CONFIG_NET_SCHED
- 	__u16			tc_index;	/* traffic control index */
-@@ -983,6 +989,13 @@ struct sk_buff {
- 	/* only useable after checking ->active_extensions != 0 */
- 	struct skb_ext		*extensions;
- #endif
-+
-+#ifdef CONFIG_DEBUG_OBJECTS_SKBUFF
-+#define DEBUG_OBJECTS_SKBUFF_STACKSIZE	20
-+	void			*free_addr[DEBUG_OBJECTS_SKBUFF_STACKSIZE];
-+	void			*alloc_addr[DEBUG_OBJECTS_SKBUFF_STACKSIZE];
-+	u32			sum;
-+#endif
- };
- 
- #ifdef __KERNEL__
-@@ -1132,7 +1145,7 @@ static inline void kfree_skb_list(struct
+@@ -1132,7 +1132,7 @@ void kfree_skb_list(struct sk_buff *segs
  void skb_dump(const char *level, const struct sk_buff *skb, bool full_pkt);
  void skb_tx_error(struct sk_buff *skb);
  
@@ -64,12 +19,7 @@
  void consume_skb(struct sk_buff *skb);
  #else
  static inline void consume_skb(struct sk_buff *skb)
-@@ -1141,9 +1154,13 @@ static inline void consume_skb(struct sk
- }
- #endif
- 
-+void consume_skb_list_fast(struct sk_buff_head *skb_list);
-+void check_skb_fast_recyclable(struct sk_buff *skb);
+@@ -1144,6 +1144,8 @@ static inline void consume_skb(struct sk
  void __consume_stateless_skb(struct sk_buff *skb);
  void  __kfree_skb(struct sk_buff *skb);
  extern struct kmem_cache *skbuff_head_cache;
@@ -78,106 +28,9 @@
  
  void kfree_skb_partial(struct sk_buff *skb, bool head_stolen);
  bool skb_try_coalesce(struct sk_buff *to, struct sk_buff *from,
-@@ -1264,6 +1281,12 @@ static inline int skb_pad(struct sk_buff
- 	return __skb_pad(skb, pad, true);
- }
- #define dev_kfree_skb(a)	consume_skb(a)
-+#define dev_kfree_skb_list_fast(a)	consume_skb_list_fast(a)
-+#if defined(CONFIG_SKB_FAST_RECYCLABLE_DEBUG_ENABLE)
-+#define dev_check_skb_fast_recyclable(a)       check_skb_fast_recyclable(a)
-+#else
-+#define dev_check_skb_fast_recyclable(a)
-+#endif
- 
- int skb_append_pagefrags(struct sk_buff *skb, struct page *page,
- 			 int offset, size_t size);
-@@ -2993,6 +3016,12 @@ static inline void *netdev_alloc_frag_al
- struct sk_buff *__netdev_alloc_skb(struct net_device *dev, unsigned int length,
- 				   gfp_t gfp_mask);
- 
-+struct sk_buff *__netdev_alloc_skb_fast(struct net_device *dev, unsigned int length,
-+				   gfp_t gfp_mask);
-+
-+struct sk_buff *__netdev_alloc_skb_no_skb_reset(struct net_device *dev, unsigned int length,
-+				   gfp_t gfp_mask);
-+
- /**
-  *	netdev_alloc_skb - allocate an skbuff for rx on a specific device
-  *	@dev: network device to receive on
-@@ -3012,6 +3041,23 @@ static inline struct sk_buff *netdev_all
- 	return __netdev_alloc_skb(dev, length, GFP_ATOMIC);
- }
- 
-+/**
-+ *	netdev_alloc_skb_fast - allocate an skbuff for rx on a specific device
-+ *	@dev: network device to receive on
-+ *	@length: length to allocate
-+ *
-+ *      This API is same as netdev_alloc_skb except for the fact that it retains
-+ *      the recycler fast flags.
-+ *
-+ *	%NULL is returned if there is no free memory. Although this function
-+ *	allocates memory it can be called from an interrupt.
-+ */
-+static inline struct sk_buff *netdev_alloc_skb_fast(struct net_device *dev,
-+						    unsigned int length)
-+{
-+	return __netdev_alloc_skb_fast(dev, length, GFP_ATOMIC);
-+}
-+
- /* legacy helper around __netdev_alloc_skb() */
- static inline struct sk_buff *__dev_alloc_skb(unsigned int length,
- 					      gfp_t gfp_mask)
---- a/lib/Kconfig.debug
-+++ b/lib/Kconfig.debug
-@@ -666,6 +666,12 @@ config DEBUG_OBJECTS_PERCPU_COUNTER
- 	  percpu counter routines to track the life time of percpu counter
- 	  objects and validate the percpu counter operations.
- 
-+config DEBUG_OBJECTS_SKBUFF
-+	bool "Debug sk_buff allocations"
-+	depends on DEBUG_OBJECTS
-+	help
-+	  Enable this to turn on debugging of sk_buff's (incl. recycler)
-+
- config DEBUG_OBJECTS_ENABLE_DEFAULT
- 	int "debug_objects bootup default value (0-1)"
- 	range 0 1
---- a/lib/debugobjects.c
-+++ b/lib/debugobjects.c
-@@ -496,6 +496,29 @@ static struct debug_bucket *get_bucket(u
- 	return &obj_hash[hash];
- }
- 
-+/*
-+ * debug_object_get_state():
-+ *   returns the state of an object given an address
-+ */
-+int debug_object_get_state(void *addr)
-+{
-+	struct debug_bucket *db;
-+	struct debug_obj *obj;
-+	unsigned long flags;
-+	enum debug_obj_state state = ODEBUG_STATE_NOTAVAILABLE;
-+
-+	db = get_bucket((unsigned long) addr);
-+
-+	raw_spin_lock_irqsave(&db->lock, flags);
-+	obj = lookup_object(addr, db);
-+	if (obj)
-+		state = obj->state;
-+	raw_spin_unlock_irqrestore(&db->lock, flags);
-+
-+	return state;
-+}
-+EXPORT_SYMBOL(debug_object_get_state);
-+
- static void debug_print_object(struct debug_obj *obj, char *msg)
- {
- 	const struct debug_obj_descr *descr = obj->descr;
 --- a/net/Kconfig
 +++ b/net/Kconfig
-@@ -332,6 +332,52 @@ config NET_FLOW_LIMIT
+@@ -332,6 +332,45 @@ config NET_FLOW_LIMIT
  	  with many clients some protection against DoS by a single (spoofed)
  	  flow that greatly exceeds average workload.
  
@@ -220,47 +73,19 @@
 +	help
 +	 Disable page fragment based allocations for skbuff payloads.
 +
-+config SKB_FAST_RECYCLABLE_DEBUG_ENABLE
-+	bool "Enable debug API for fast recycled skbs"
-+	depends on SKB_RECYCLER
-+	default n
-+	help
-+	Enable debug API for fast recycled skbs.
-+
  menu "Network testing"
  
  config NET_PKTGEN
 --- a/net/core/Makefile
 +++ b/net/core/Makefile
-@@ -38,3 +38,5 @@ obj-$(CONFIG_NET_SOCK_MSG) += skmsg.o
+@@ -38,3 +38,4 @@ obj-$(CONFIG_NET_SOCK_MSG) += skmsg.o
  obj-$(CONFIG_BPF_SYSCALL) += sock_map.o
  obj-$(CONFIG_BPF_SYSCALL) += bpf_sk_storage.o
  obj-$(CONFIG_OF)	+= of_net.o
 +obj-$(CONFIG_SKB_RECYCLER) += skbuff_recycle.o
-+obj-$(CONFIG_DEBUG_OBJECTS_SKBUFF) += skbuff_debug.o skbuff_notifier.o
 --- a/net/core/dev.c
 +++ b/net/core/dev.c
-@@ -152,6 +152,7 @@
- #include <linux/once_lite.h>
- 
- #include "net-sysfs.h"
-+#include "skbuff_debug.h"
- 
- #define MAX_GRO_SKBS 8
- 
-@@ -6243,8 +6244,10 @@ static gro_result_t napi_skb_finish(stru
- 		break;
- 
- 	case GRO_MERGED_FREE:
--		if (NAPI_GRO_CB(skb)->free == NAPI_GRO_FREE_STOLEN_HEAD)
-+		if (NAPI_GRO_CB(skb)->free == NAPI_GRO_FREE_STOLEN_HEAD) {
- 			napi_skb_free_stolen_head(skb);
-+			skbuff_debugobj_deactivate(skb);
-+		}
- 		else if (skb->fclone != SKB_FCLONE_UNAVAILABLE)
- 			__kfree_skb(skb);
- 		else
-@@ -6488,10 +6491,16 @@ static int process_backlog(struct napi_s
+@@ -6488,10 +6488,16 @@ static int process_backlog(struct napi_s
  
  	napi->weight = READ_ONCE(dev_rx_weight);
  	while (again) {
@@ -280,12 +105,11 @@
  			input_queue_head_incr(sd);
 --- a/net/core/skbuff.c
 +++ b/net/core/skbuff.c
-@@ -83,6 +83,34 @@
+@@ -82,6 +82,32 @@
+ 
  #include "datagram.h"
  #include "sock_destructor.h"
- 
 +#include "skbuff_recycle.h"
-+#include "skbuff_debug.h"
 +
 +struct kmem_cache *skb_data_cache;
 +
@@ -311,27 +135,10 @@
 +#define SKB_DATA_CACHE_SIZE ((SKB_DATA_ALIGN(1856 + NET_SKB_PAD)) + SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
 +#endif
 +#endif
-+
+ 
  struct kmem_cache *skbuff_head_cache __ro_after_init;
  static struct kmem_cache *skbuff_fclone_cache __ro_after_init;
- #ifdef CONFIG_SKB_EXTENSIONS
-@@ -242,6 +270,7 @@ struct sk_buff *__build_skb(void *data,
- 	skb = kmem_cache_alloc(skbuff_head_cache, GFP_ATOMIC);
- 	if (unlikely(!skb))
- 		return NULL;
-+	skbuff_debugobj_init_and_activate(skb);
- 
- 	memset(skb, 0, offsetof(struct sk_buff, tail));
- 	__build_skb_around(skb, data, frag_size);
-@@ -308,6 +337,7 @@ static struct sk_buff *__napi_build_skb(
- 	if (unlikely(!skb))
- 		return NULL;
- 
-+	skbuff_debugobj_init_and_activate(skb);
- 	memset(skb, 0, offsetof(struct sk_buff, tail));
- 	__build_skb_around(skb, data, frag_size);
- 
-@@ -354,7 +384,12 @@ static void *kmalloc_reserve(size_t size
+@@ -354,7 +380,12 @@ static void *kmalloc_reserve(size_t size
  	 * Try a regular allocation, when that fails and we're not entitled
  	 * to the reserves, fail.
  	 */
@@ -345,7 +152,7 @@
  					flags | __GFP_NOMEMALLOC | __GFP_NOWARN,
  					node);
  	if (obj || !(gfp_pfmemalloc_allowed(flags)))
-@@ -362,7 +397,10 @@ static void *kmalloc_reserve(size_t size
+@@ -362,7 +393,10 @@ static void *kmalloc_reserve(size_t size
  
  	/* Try again but now we are using pfmemalloc reserves */
  	ret_pfmemalloc = true;
@@ -357,23 +164,7 @@
  
  out:
  	if (pfmemalloc)
-@@ -416,6 +454,7 @@ struct sk_buff *__alloc_skb(unsigned int
- 		skb = kmem_cache_alloc_node(cache, gfp_mask & ~GFP_DMA, node);
- 	if (unlikely(!skb))
- 		return NULL;
-+	skbuff_debugobj_init_and_activate(skb);
- 	prefetchw(skb);
- 
- 	/* We do our best to align skb_shared_info on a separate cache
-@@ -458,6 +497,7 @@ struct sk_buff *__alloc_skb(unsigned int
- 	return skb;
- 
- nodata:
-+	skbuff_debugobj_init_and_activate(skb);
- 	kmem_cache_free(cache, skb);
- 	return NULL;
- }
-@@ -466,7 +506,7 @@ EXPORT_SYMBOL(__alloc_skb);
+@@ -466,7 +500,7 @@ EXPORT_SYMBOL(__alloc_skb);
  /**
   *	__netdev_alloc_skb - allocate an skbuff for rx on a specific device
   *	@dev: network device to receive on
@@ -382,7 +173,7 @@
   *	@gfp_mask: get_free_pages mask, passed to alloc_skb
   *
   *	Allocate a new &sk_buff and assign it a usage count of one. The
-@@ -476,22 +516,49 @@ EXPORT_SYMBOL(__alloc_skb);
+@@ -476,22 +510,47 @@ EXPORT_SYMBOL(__alloc_skb);
   *
   *	%NULL is returned if there is no free memory.
   */
@@ -396,10 +187,8 @@
 +	unsigned int len = length;
 +
 +#ifdef CONFIG_SKB_RECYCLER
-+	bool reset_skb = true;
-+	skb = skb_recycler_alloc(dev, length, reset_skb);
++	skb = skb_recycler_alloc(dev, length);
 +	if (likely(skb)) {
-+		skb->recycled_for_ds = 0;
 +		return skb;
 +	}
 +
@@ -436,7 +225,7 @@
  		skb = __alloc_skb(len, gfp_mask, SKB_ALLOC_RX, NUMA_NO_NODE);
  		if (!skb)
  			goto skb_fail;
-@@ -528,6 +595,7 @@ struct sk_buff *__netdev_alloc_skb(struc
+@@ -528,6 +587,7 @@ struct sk_buff *__netdev_alloc_skb(struc
  	if (pfmemalloc)
  		skb->pfmemalloc = 1;
  	skb->head_frag = 1;
@@ -444,129 +233,7 @@
  
  skb_success:
  	skb_reserve(skb, NET_SKB_PAD);
-@@ -538,6 +606,121 @@ skb_fail:
- }
- EXPORT_SYMBOL(__netdev_alloc_skb);
- 
-+#ifdef CONFIG_SKB_RECYCLER
-+/* __netdev_alloc_skb_no_skb_reset - allocate an skbuff for rx on a specific device
-+ *	@dev: network device to receive on
-+ *	@length: length to allocate
-+ *	@gfp_mask: get_free_pages mask, passed from wifi driver
-+ *
-+ *	Allocate a new &sk_buff and assign it a usage count of one. The
-+ *	buffer has NET_SKB_PAD headroom built in. Users should allocate
-+ *	the headroom they think they need without accounting for the
-+ *	built in space. The built in space is used for optimisations.
-+ *
-+ *	Currently, using __netdev_alloc_skb_no_skb_reset for DS alone
-+ *	and it invokes skb_recycler_alloc with reset_skb as false.
-+ *	Hence, recycler pool will not do reset_struct when it
-+ *	allocates DS used buffer to DS module, which will
-+ *	improve the performance
-+ *
-+ *      %NULL is returned if there is no free memory.
-+ */
-+struct sk_buff *__netdev_alloc_skb_no_skb_reset(struct net_device *dev,
-+						unsigned int length, gfp_t gfp_mask)
-+{
-+	struct sk_buff *skb;
-+	unsigned int len = length;
-+	bool reset_skb = false;
-+
-+#ifdef CONFIG_SKB_RECYCLER
-+	skb = skb_recycler_alloc(dev, length, reset_skb);
-+	if (likely(skb)) {
-+		skb->fast_recycled = 0;
-+		return skb;
-+	}
-+
-+	len = SKB_RECYCLE_SIZE;
-+	if (unlikely(length > SKB_RECYCLE_SIZE))
-+		len = length;
-+
-+	skb = __alloc_skb(len + NET_SKB_PAD, gfp_mask,
-+				SKB_ALLOC_RX, NUMA_NO_NODE);
-+	if (!skb)
-+		goto skb_fail;
-+
-+	goto skb_success;
-+#else
-+	struct page_frag_cache *nc;
-+	bool pfmemalloc;
-+	bool page_frag_alloc_enable = true;
-+	void *data;
-+
-+	len += NET_SKB_PAD;
-+#ifdef CONFIG_ALLOC_SKB_PAGE_FRAG_DISABLE
-+        page_frag_alloc_enable = false;
-+#endif
-+	/* If requested length is either too small or too big,
-+	 * we use kmalloc() for skb->head allocation.
-+	 */
-+	if (len <= SKB_WITH_OVERHEAD(1024) ||
-+		len > SKB_WITH_OVERHEAD(PAGE_SIZE) ||
-+		(gfp_mask & (__GFP_DIRECT_RECLAIM | GFP_DMA)) ||
-+		!page_frag_alloc_enable) {
-+		skb = __alloc_skb(len, gfp_mask, SKB_ALLOC_RX, NUMA_NO_NODE);
-+		if (!skb)
-+			goto skb_fail;
-+		goto skb_success;
-+	}
-+
-+	len += SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
-+	len = SKB_DATA_ALIGN(len);
-+
-+	if (sk_memalloc_socks())
-+		gfp_mask |= __GFP_MEMALLOC;
-+
-+	if (in_irq() || irqs_disabled()) {
-+		nc = this_cpu_ptr(&netdev_alloc_cache);
-+		data = page_frag_alloc(nc, len, gfp_mask);
-+		pfmemalloc = nc->pfmemalloc;
-+	} else {
-+		local_bh_disable();
-+		nc = this_cpu_ptr(&napi_alloc_cache.page);
-+		data = page_frag_alloc(nc, len, gfp_mask);
-+		pfmemalloc = nc->pfmemalloc;
-+		local_bh_enable();
-+	}
-+
-+	if (unlikely(!data))
-+		return NULL;
-+
-+	skb = __build_skb(data, len);
-+	if (unlikely(!skb)) {
-+		skb_free_frag(data);
-+		return NULL;
-+
-+	/* use OR instead of assignment to avoid clearing of bits in mask */
-+	if (pfmemalloc)
-+		skb->pfmemalloc = 1;
-+	skb->head_frag = 1;
-+#endif
-+
-+skb_success:
-+	skb_reserve(skb, NET_SKB_PAD);
-+	skb->dev = dev;
-+
-+skb_fail:
-+	return skb;
-+}
-+EXPORT_SYMBOL(__netdev_alloc_skb_no_skb_reset);
-+#else
-+struct sk_buff *__netdev_alloc_skb_no_skb_reset(struct net_device *dev,
-+						unsigned int length, gfp_t gfp_mask)
-+{
-+	return __netdev_alloc_skb(dev, length, gfp_mask);
-+}
-+EXPORT_SYMBOL(__netdev_alloc_skb_no_skb_reset);
-+#endif
-+
- /**
-  *	__napi_alloc_skb - allocate skbuff for rx in a specific NAPI instance
-  *	@napi: napi instance this buffer was allocated for
-@@ -673,7 +856,7 @@ static void skb_free_head(struct sk_buff
+@@ -673,7 +733,7 @@ static void skb_free_head(struct sk_buff
  	}
  }
  
@@ -575,7 +242,7 @@
  {
  	struct skb_shared_info *shinfo = skb_shinfo(skb);
  	int i;
-@@ -708,12 +891,13 @@ exit:
+@@ -708,7 +768,7 @@ exit:
  /*
   *	Free an skbuff by memory without cleaning the state.
   */
@@ -584,21 +251,7 @@
  {
  	struct sk_buff_fclones *fclones;
  
- 	switch (skb->fclone) {
- 	case SKB_FCLONE_UNAVAILABLE:
-+		skbuff_debugobj_deactivate(skb);
- 		kmem_cache_free(skbuff_head_cache, skb);
- 		return;
- 
-@@ -735,6 +919,7 @@ static void kfree_skbmem(struct sk_buff
- 	if (!refcount_dec_and_test(&fclones->fclone_ref))
- 		return;
- fastpath:
-+	skbuff_debugobj_deactivate(&fclones->skb1);
- 	kmem_cache_free(skbuff_fclone_cache, fclones);
- }
- 
-@@ -913,7 +1098,6 @@ void skb_tx_error(struct sk_buff *skb)
+@@ -913,7 +973,6 @@ void skb_tx_error(struct sk_buff *skb)
  }
  EXPORT_SYMBOL(skb_tx_error);
  
@@ -606,7 +259,7 @@
  /**
   *	consume_skb - free an skbuff
   *	@skb: buffer to free
-@@ -922,18 +1106,93 @@ EXPORT_SYMBOL(skb_tx_error);
+@@ -922,13 +981,50 @@ EXPORT_SYMBOL(skb_tx_error);
   *	Functions identically to kfree_skb, but kfree_skb assumes that the frame
   *	is being dropped after a failure and notes that
   */
@@ -658,94 +311,7 @@
  }
  EXPORT_SYMBOL(consume_skb);
  #endif
- 
- /**
-+ *	consume_skb_list_fast - free a list of skbs
-+ *	@skb_list: head of the buffer list
-+ *
-+ *	Add the list of given SKBs to CPU list. Assumption is that these buffers
-+ *	have been allocated originally from the skb recycler and have been transmitted
-+ *	through a controlled fast xmit path, thus removing the need for additional checks
-+ *	before recycling the buffers back to pool
-+ */
-+void consume_skb_list_fast(struct sk_buff_head *skb_list)
-+{
-+	struct sk_buff *skb = NULL;
-+
-+	if (likely(skb_recycler_consume_list_fast(skb_list))) {
-+		return;
-+	}
-+
-+	while ((skb = skb_dequeue(skb_list)) != NULL) {
-+		/*
-+		 * Check if release head state is needed
-+		 */
-+		skb_release_head_state(skb);
-+
-+		trace_consume_skb(skb);
-+
-+		/*
-+		 * We're not recycling so now we need to do the rest of what we would
-+		 * have done in __kfree_skb (above and beyond the skb_release_head_state
-+		 * that we already did).
-+		 */
-+		if (likely(skb->head))
-+			skb_release_data(skb);
-+
-+		kfree_skbmem(skb);
-+	}
-+}
-+EXPORT_SYMBOL(consume_skb_list_fast);
-+
-+/**
-  *	__consume_stateless_skb - free an skbuff, assuming it is stateless
-  *	@skb: buffer to free
-  *
-@@ -1036,6 +1295,13 @@ static void __copy_skb_header(struct sk_
- 	memcpy(&new->headers_start, &old->headers_start,
- 	       offsetof(struct sk_buff, headers_end) -
- 	       offsetof(struct sk_buff, headers_start));
-+
-+	/* Clear the skb recycler flags here to make sure any skb whose size
-+	 * has been altered is not put back into recycler pool.
-+	 */
-+	new->is_from_recycler = 0;
-+	new->fast_recycled = 0;
-+	new->recycled_for_ds = 0;
- 	CHECK_SKB_FIELD(protocol);
- 	CHECK_SKB_FIELD(csum);
- 	CHECK_SKB_FIELD(hash);
-@@ -1063,7 +1329,6 @@ static void __copy_skb_header(struct sk_
- #ifdef CONFIG_NET_SCHED
- 	CHECK_SKB_FIELD(tc_index);
- #endif
--
- }
- 
- /*
-@@ -1540,6 +1805,7 @@ struct sk_buff *skb_clone(struct sk_buff
- 		n = kmem_cache_alloc(skbuff_head_cache, gfp_mask);
- 		if (!n)
- 			return NULL;
-+		skbuff_debugobj_init_and_activate(n);
- 
- 		n->fclone = SKB_FCLONE_UNAVAILABLE;
- 	}
-@@ -1784,6 +2050,13 @@ int pskb_expand_head(struct sk_buff *skb
- 	if (!skb->sk || skb->destructor == sock_edemux)
- 		skb->truesize += size - osize;
- 
-+	/* Clear the skb recycler flags here to make sure any skb whose size
-+	 * has been expanded is not put back into recycler.
-+	 */
-+	skb->is_from_recycler = 0;
-+	skb->fast_recycled = 0;
-+	skb->recycled_for_ds = 0;
-+
- 	return 0;
- 
- nofrags:
-@@ -4555,6 +4828,11 @@ static void skb_extensions_init(void) {}
+@@ -4555,6 +4651,11 @@ static void skb_extensions_init(void) {}
  
  void __init skb_init(void)
  {
@@ -757,7 +323,7 @@
  	skbuff_head_cache = kmem_cache_create_usercopy("skbuff_head_cache",
  					      sizeof(struct sk_buff),
  					      0,
-@@ -4568,6 +4846,7 @@ void __init skb_init(void)
+@@ -4568,6 +4669,7 @@ void __init skb_init(void)
  						SLAB_HWCACHE_ALIGN|SLAB_PANIC,
  						NULL);
  	skb_extensions_init();
@@ -765,11 +331,3 @@
  }
  
  static int
-@@ -5428,6 +5707,7 @@ void kfree_skb_partial(struct sk_buff *s
- {
- 	if (head_stolen) {
- 		skb_release_head_state(skb);
-+		skbuff_debugobj_deactivate(skb);
- 		kmem_cache_free(skbuff_head_cache, skb);
- 	} else {
- 		__kfree_skb(skb);
