@@ -217,15 +217,7 @@
  	err = ovs_vport_cmd_fill_info(vport, reply, genl_info_net(info),
  				      info->snd_portid, info->snd_seq, 0,
  				      OVS_VPORT_CMD_NEW, GFP_KERNEL);
-@@ -2316,7 +2446,6 @@ static int ovs_vport_cmd_set(struct sk_b
- 			goto exit_unlock_free;
- 	}
- 
--
- 	if (a[OVS_VPORT_ATTR_UPCALL_PID]) {
- 		struct nlattr *ids = a[OVS_VPORT_ATTR_UPCALL_PID];
- 
-@@ -2365,6 +2494,7 @@ static int ovs_vport_cmd_del(struct sk_b
+@@ -2365,6 +2495,7 @@ static int ovs_vport_cmd_del(struct sk_b
  		goto exit_unlock_free;
  	}
  
@@ -233,7 +225,7 @@
  	err = ovs_vport_cmd_fill_info(vport, reply, genl_info_net(info),
  				      info->snd_portid, info->snd_seq, 0,
  				      OVS_VPORT_CMD_DEL, GFP_KERNEL);
-@@ -2395,6 +2525,276 @@ exit_unlock_free:
+@@ -2395,6 +2526,276 @@ exit_unlock_free:
  	return err;
  }
  
@@ -510,7 +502,7 @@
  static int ovs_vport_cmd_get(struct sk_buff *skb, struct genl_info *info)
  {
  	struct nlattr **a = info->attrs;
-@@ -2661,6 +3061,8 @@ static int __init dp_init(void)
+@@ -2661,6 +3062,8 @@ static int __init dp_init(void)
  
  	pr_info("Open vSwitch switching datapath\n");
  
@@ -519,7 +511,7 @@
  	err = action_fifos_init();
  	if (err)
  		goto error;
-@@ -2710,6 +3112,7 @@ error_unreg_rtnl_link:
+@@ -2710,6 +3113,7 @@ error_unreg_rtnl_link:
  error_action_fifos_exit:
  	action_fifos_exit();
  error:
