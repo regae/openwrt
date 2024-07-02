@@ -622,7 +622,7 @@
  
 --- a/drivers/net/ifb.c 
 +++ b/drivers/net/ifb.c 
-@@ -121,6 +121,31 @@ resched:
+@@ -125,6 +125,31 @@ resched:
  
  }
  
@@ -735,7 +735,7 @@
  		/* remove it from the ppp unit's list */
  		ppp_lock(ppp);
  		list_del(&pch->clist);
-@@ -3585,6 +3621,210 @@ static void *unit_find(struct idr *p, int n)
+@@ -3587,6 +3623,210 @@ static void *unit_find(struct idr *p, int n)
  	return idr_find(p, n);
  }
  
@@ -1405,7 +1405,7 @@
  /* caller should hold vxlan->hash_lock */
  static struct vxlan_rdst *vxlan_fdb_find_rdst(struct vxlan_fdb *f,
  					      union vxlan_addr *ip, __be16 port,
-@@ -2749,6 +2780,9 @@ static void vxlan_xmit_one(struct sk_buff *skb, struct
+@@ -2745,6 +2776,9 @@ static void vxlan_xmit_one(struct sk_buff *skb, struct
  			dst_release(ndst);
  			goto out_unlock;
  		}
@@ -1415,7 +1415,7 @@
  
  		tos = ip_tunnel_ecn_encap(tos, old_iph, skb);
  		ttl = ttl ? : ip4_dst_hoplimit(&rt->dst);
-@@ -2821,6 +2855,9 @@ static void vxlan_xmit_one(struct sk_buff *skb, struct
+@@ -2817,6 +2851,9 @@ static void vxlan_xmit_one(struct sk_buff *skb, struct
  		if (err < 0)
  			goto tx_error;
  
@@ -1588,7 +1588,7 @@
  };
  const char *netdev_cmd_to_name(enum netdev_cmd cmd);
  
-@@ -4733,6 +4762,15 @@ void dev_uc_init(struct net_device *dev);
+@@ -4732,6 +4761,15 @@ void dev_uc_init(struct net_device *dev);
  void dev_uc_flush(struct net_device *dev);
  void dev_uc_init(struct net_device *dev);
  
@@ -2230,7 +2230,7 @@
  			spin_unlock_bh(&br->hash_lock);
  		}
  	}
-@@ -577,10 +611,19 @@ static bool __fdb_mark_active(struct net_bridge_fdb_en
+@@ -579,10 +613,19 @@ static bool __fdb_mark_active(struct net_bridge_fdb_en
  		  test_and_clear_bit(BR_FDB_NOTIFY_INACTIVE, &fdb->flags));
  }
  
@@ -2532,7 +2532,7 @@
  
 --- a/net/ipv6/ip6_gre.c 
 +++ b/net/ipv6/ip6_gre.c 
-@@ -1940,6 +1940,7 @@ static void ip6gre_tap_setup(struct net_device *dev)
+@@ -1943,6 +1943,7 @@ static void ip6gre_tap_setup(struct net_device *dev)
  
  	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
  	dev->priv_flags |= IFF_LIVE_ADDR_CHANGE;
@@ -2791,7 +2791,7 @@
  	}
  	return XT_CONTINUE;
  }
-@@ -47,6 +59,10 @@ dscp_tg6(struct sk_buff *skb, const struct xt_action_p
+@@ -48,6 +60,10 @@ dscp_tg6(struct sk_buff *skb, const struct xt_action_p
  	const struct xt_DSCP_info *dinfo = par->targinfo;
  	u_int8_t dscp = ipv6_get_dsfield(ipv6_hdr(skb)) >> XT_DSCP_SHIFT;
  
