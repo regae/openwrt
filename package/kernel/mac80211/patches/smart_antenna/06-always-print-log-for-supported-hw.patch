@@ -1,0 +1,56 @@
+--- a/drivers/net/wireless/ath/ath10k/smart_ant.c
++++ b/drivers/net/wireless/ath/ath10k/smart_ant.c
+@@ -1824,11 +1824,8 @@ int ath10k_smart_ant_sta_connect(struct
+ 
+ 	if (arvif->vdev_type != WMI_VDEV_TYPE_AP ||
+ 	    arvif->vdev_subtype != WMI_VDEV_SUBTYPE_NONE) {
+-		if (ar->smart_ant_info.debug_level >=
+-		    ATH10K_SMART_ANT_DBG_LVL_TOP_DECISION) {
+-			ath10k_dbg(ar, ATH10K_DBG_SMART_ANT,
+-				   "Smart antenna logic not enabled for non-AP interface\n");
+-		}
++		ath10k_warn(ar,
++			   "Smart antenna logic not enabled for non-AP interface\n");
+ 		return 0;
+ 	}
+ 
+@@ -1955,11 +1952,8 @@ int ath10k_smart_ant_set_default(struct
+ 
+ 	if (arvif->vdev_type != WMI_VDEV_TYPE_AP ||
+ 	    arvif->vdev_subtype != WMI_VDEV_SUBTYPE_NONE) {
+-		if (ar->smart_ant_info.debug_level >=
+-			ATH10K_SMART_ANT_DBG_LVL_TOP_DECISION) {
+-			ath10k_dbg(ar, ATH10K_DBG_SMART_ANT,
++		ath10k_warn(ar,
+ 			"Smart antenna logic not enabled for non-AP interface\n");
+-		}
+ 		return 0;
+ 	}
+ 
+@@ -2037,11 +2031,8 @@ int ath10k_smart_ant_enable(struct ath10
+ 	 */
+ 	if (arvif->vdev_type != WMI_VDEV_TYPE_AP ||
+ 	    arvif->vdev_subtype != WMI_VDEV_SUBTYPE_NONE) {
+-		if (ar->smart_ant_info.debug_level >=
+-		    ATH10K_SMART_ANT_DBG_LVL_TOP_DECISION) {
+-			ath10k_dbg(ar, ATH10K_DBG_SMART_ANT,
++		ath10k_warn(ar,
+ 			"Smart antenna logic not enabled for non-AP interface\n");
+-		}
+ 		return 0;
+ 	}
+ 
+@@ -2051,11 +2042,8 @@ int ath10k_smart_ant_enable(struct ath10
+ 
+ 	smart_ant_init_param(ar);
+ 
+-	if (ar->smart_ant_info.debug_level >=
+-	    ATH10K_SMART_ANT_DBG_LVL_TOP_DECISION) {
+-		ath10k_dbg(ar, ATH10K_DBG_SMART_ANT,
+-			   "Hw supports Smart antenna, enabling it in driver\n");
+-	}
++	ath10k_info(ar,
++		   "Hw supports Smart antenna, enabling it in driver\n");
+ 
+ 	/* Enable smart antenna logic in fw with mode and default antenna */
+ 	ret = ath10k_wmi_pdev_enable_smart_ant(ar, info->mode,
