@@ -1,0 +1,50 @@
+--- a/drivers/net/wireless/ath/ath10k/mac.c
++++ b/drivers/net/wireless/ath/ath10k/mac.c
+@@ -5898,23 +5898,6 @@ static int ath10k_add_interface(struct i
+ 				    arvif->vdev_id, ret);
+ 	}
+ 
+-#ifdef CPTCFG_ATH10K_SMART_ANTENNA
+-	ret = ath10k_smart_ant_enable(ar, arvif);
+-	if (ret) {
+-		ath10k_warn(ar, "failed to enable smart antenna algorithm %d\n",
+-			    ret);
+-		goto err_peer_delete;
+-	}
+-
+-	ret = ath10k_smart_ant_set_default(ar, arvif);
+-	if (ret) {
+-		ath10k_warn(ar, "failed to set default smart antenna configuration %d\n",
+-			    ret);
+-		ath10k_smart_ant_disable(ar, arvif);
+-		goto err_peer_delete;
+-	}
+-#endif
+-
+ 	if (vif->type == NL80211_IFTYPE_MONITOR) {
+ 		ar->monitor_arvif = arvif;
+ 		ret = ath10k_monitor_recalc(ar);
+@@ -9108,6 +9091,23 @@ ath10k_mac_op_assign_vif_chanctx(struct
+ 		}
+ 	}
+ 
++#ifdef CPTCFG_ATH10K_SMART_ANTENNA
++	ret = ath10k_smart_ant_enable(ar, arvif);
++	if (ret) {
++		ath10k_warn(ar, "failed to enable smart antenna algorithm %d\n",
++			    ret);
++		goto err_stop;
++	}
++
++	ret = ath10k_smart_ant_set_default(ar, arvif);
++	if (ret) {
++		ath10k_warn(ar, "failed to set default smart antenna configuration %d\n",
++			    ret);
++		ath10k_smart_ant_disable(ar, arvif);
++		goto err_stop;
++	}
++#endif
++
+ 	mutex_unlock(&ar->conf_mutex);
+ 	return 0;
+ 
