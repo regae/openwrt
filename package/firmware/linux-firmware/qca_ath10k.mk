@@ -82,6 +82,14 @@ define Package/ath10k-firmware-qca988x/install
 		$(1)/lib/firmware/ath10k/QCA988X/hw2.0/firmware-5.bin
 endef
 $(eval $(call BuildPackage,ath10k-firmware-qca988x))
+Package/ath10k-firmware-qca988x-sa = $(call Package/firmware-default,ath10k qca988x firmware,+ath10k-board-qca988x)
+define Package/ath10k-firmware-qca988x-sa/install
+	$(INSTALL_DIR) $(1)/lib/firmware/ath10k/QCA988X/hw2.0
+	$(INSTALL_DATA) \
+		$(PKG_BUILD_DIR)/ath10k/QCA988X/hw2.0/firmware-5.bin_10.2.4-1.0-00045 \
+		$(1)/lib/firmware/ath10k/QCA988X/hw2.0/firmware-5.bin
+endef
+$(eval $(call BuildPackage,ath10k-firmware-qca988x-sa))
 
 Package/ath10k-firmware-qca6174 = $(call Package/firmware-default,ath10k qca6174 firmware,,LICENSE.QualcommAtheros_ath10k)
 define Package/ath10k-firmware-qca6174/install
