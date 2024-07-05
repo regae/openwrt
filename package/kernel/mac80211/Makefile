@@ -75,6 +75,8 @@ config-y:= \
 	WLAN_VENDOR_ST \
 	WLAN_VENDOR_TI \
 	WLAN_VENDOR_ZYDAS \
+	ATH10K_SMART_ANT_ALG \
+	ATH10K_SMART_ANTENNA \
 
 config-$(call config_package,cfg80211) += CFG80211
 config-$(CONFIG_PACKAGE_CFG80211_TESTMODE) += NL80211_TESTMODE
@@ -343,6 +345,7 @@ define Build/Patch
 	$(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/brcm,brcm/)
 	$(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/rtl,rtl/)
 	$(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/qca,qca/)
+	$(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/smart_antenna,smart_antenna/)
 	$(if $(QUILT),touch $(PKG_BUILD_DIR)/.quilt_used)
 endef
 
@@ -360,6 +363,7 @@ define Quilt/Refresh/Package
 	$(call Quilt/RefreshDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/brcm,brcm/)
 	$(call Quilt/RefreshDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/rtl,rtl/)
 	$(call Quilt/RefreshDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/qca,qca/)
+	$(call Quilt/RefreshDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/smart_antenna,smart_antenna/)
 endef
 
 define Build/Compile
