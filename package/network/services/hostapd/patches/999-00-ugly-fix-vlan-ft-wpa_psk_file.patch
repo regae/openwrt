@@ -1,0 +1,44 @@
+--- a/src/ap/wpa_auth_ft.c
++++ b/src/ap/wpa_auth_ft.c
+@@ -664,12 +664,12 @@ static int wpa_ft_action_send(struct wpa
+ 
+ static const u8 * wpa_ft_get_psk(struct wpa_authenticator *wpa_auth,
+ 				 const u8 *addr, const u8 *p2p_dev_addr,
+-				 const u8 *prev_psk)
++				 const u8 *prev_psk, int *vlan_id)
+ {
+ 	if (wpa_auth->cb->get_psk == NULL)
+ 		return NULL;
+ 	return wpa_auth->cb->get_psk(wpa_auth->cb_ctx, addr, p2p_dev_addr,
+-				     prev_psk, NULL, NULL);
++				     prev_psk, NULL, vlan_id);
+ }
+ 
+ 
+@@ -2987,12 +2987,13 @@ static int wpa_ft_psk_pmk_r1(struct wpa_
+ 	const u8 *ssid = wpa_auth->conf.ssid;
+ 	size_t ssid_len = wpa_auth->conf.ssid_len;
+ 	int pairwise;
++	int vlan_id = 0;
+ 
+ 	pairwise = sm->pairwise;
+ 
+ 	for (;;) {
+ 		pmk = wpa_ft_get_psk(wpa_auth, sm->addr, sm->p2p_dev_addr,
+-				     pmk);
++				     pmk, &vlan_id);
+ 		if (pmk == NULL)
+ 			break;
+ 
+@@ -3020,6 +3021,11 @@ static int wpa_ft_psk_pmk_r1(struct wpa_
+ 				   MACSTR, MAC2STR(sm->addr));
+ 			return -1;
+ 		}
++
++		if (vlan_id && vlan_id != out_vlan->untagged) {
++			out_vlan->notempty = 1;
++			out_vlan->untagged = vlan_id;
++		}
+ 
+ 		if (out_identity && out_identity_len) {
+ 			*out_identity_len = wpa_ft_get_identity(
