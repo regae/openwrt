@@ -2246,17 +2246,18 @@
  		   const unsigned char *addr, u16 vid, unsigned long flags)
  {
  	struct net_bridge_fdb_entry *fdb;
-+	struct br_fdb_event fdb_event;
++	struct br_fdb_event fdb_event = {0};
  
  	/* some users want to always flood. */
  	if (hold_time(br) == 0)
-@@ -607,14 +650,23 @@ void br_fdb_update(struct net_bridge *br, struct net_b
+@@ -607,14 +650,24 @@ void br_fdb_update(struct net_bridge *br, struct net_b
  			/* fastpath: update of existing entry */
  			if (unlikely(source != READ_ONCE(fdb->dst) &&
  				     !test_bit(BR_FDB_STICKY, &fdb->flags))) {
 +				ether_addr_copy(fdb_event.addr, addr);
 +				fdb_event.br = br;
-+				fdb_event.orig_dev = fdb->dst->dev;
++				if (fdb->dst)
++					fdb_event.orig_dev = fdb->dst->dev;
 +				fdb_event.dev = source->dev;
  				br_switchdev_fdb_notify(br, fdb, RTM_DELNEIGH);
  				WRITE_ONCE(fdb->dst, source);
@@ -2274,7 +2275,7 @@
  			}
  
  			if (unlikely(test_bit(BR_FDB_ADDED_BY_USER, &flags)))
-@@ -638,6 +690,44 @@ static int fdb_to_nud(const struct net_bridge *br,
+@@ -638,6 +691,44 @@ static int fdb_to_nud(const struct net_bridge *br,
  	}
  }
  
@@ -2319,7 +2320,7 @@
  static int fdb_to_nud(const struct net_bridge *br,
  		      const struct net_bridge_fdb_entry *fdb)
  {
-@@ -797,6 +887,23 @@ static void fdb_notify(struct net_bridge *br,
+@@ -797,6 +888,23 @@ static void fdb_notify(struct net_bridge *br,
  	if (swdev_notify)
  		br_switchdev_fdb_notify(br, fdb, type);
  
