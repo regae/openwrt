@@ -1,0 +1,40 @@
+--- a/drivers/net/wireless/ath/ath10k/pci.c
++++ b/drivers/net/wireless/ath/ath10k/pci.c
+@@ -3231,6 +3231,7 @@ static void ath10k_pci_free_irq(struct a
+ void ath10k_pci_init_napi(struct ath10k *ar)
+ {
+ 	netif_napi_add(&ar->napi_dev, &ar->napi, ath10k_pci_napi_poll);
++	dev_set_threaded(&ar->napi_dev, true);
+ }
+ 
+ static int ath10k_pci_init_irq(struct ath10k *ar)
+--- a/drivers/net/wireless/ath/ath10k/sdio.c
++++ b/drivers/net/wireless/ath/ath10k/sdio.c
+@@ -2531,6 +2531,7 @@ static int ath10k_sdio_probe(struct sdio
+ 	}
+ 
+ 	netif_napi_add(&ar->napi_dev, &ar->napi, ath10k_sdio_napi_poll);
++	dev_set_threaded(&ar->napi_dev, true);
+ 
+ 	ath10k_dbg(ar, ATH10K_DBG_BOOT,
+ 		   "sdio new func %d vendor 0x%x device 0x%x block 0x%x/0x%x\n",
+--- a/drivers/net/wireless/ath/ath10k/core.c
++++ b/drivers/net/wireless/ath/ath10k/core.c
+@@ -2588,6 +2588,7 @@ void ath10k_core_napi_enable(struct ath10k *ar)
+ 	if (test_bit(ATH10K_FLAG_NAPI_ENABLED, &ar->dev_flags))
+ 		return;
+ 
++	dev_set_threaded(&ar->napi_dev, true);
+ 	napi_enable(&ar->napi);
+ 	set_bit(ATH10K_FLAG_NAPI_ENABLED, &ar->dev_flags);
+ }
+@@ -3815,6 +3816,9 @@ struct ath10k *ath10k_core_create(size_t
+ 		  ath10k_core_set_coverage_class_work);
+ 
+ 	init_dummy_netdev(&ar->napi_dev);
++	snprintf(ar->napi_dev.name, sizeof(ar->napi_dev.name), "ath10k_%s",
++		 wiphy_name(ar->hw->wiphy));
++	ar->napi_dev.threaded = 1;
+ 
+ 	ret = ath10k_coredump_create(ar);
+ 	if (ret)
