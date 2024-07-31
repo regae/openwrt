@@ -1,6 +1,6 @@
 --- a/drivers/net/wireless/ath/ath10k/mac.c
 +++ b/drivers/net/wireless/ath/ath10k/mac.c
-@@ -5898,23 +5898,6 @@ static int ath10k_add_interface(struct i
+@@ -5900,23 +5900,6 @@ static int ath10k_add_interface(struct i
  				    arvif->vdev_id, ret);
  	}
  
@@ -24,7 +24,7 @@
  	if (vif->type == NL80211_IFTYPE_MONITOR) {
  		ar->monitor_arvif = arvif;
  		ret = ath10k_monitor_recalc(ar);
-@@ -9108,6 +9091,23 @@ ath10k_mac_op_assign_vif_chanctx(struct
+@@ -9117,6 +9100,23 @@ ath10k_mac_op_assign_vif_chanctx(struct
  		}
  	}
  

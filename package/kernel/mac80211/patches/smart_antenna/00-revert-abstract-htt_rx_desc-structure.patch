@@ -122,8 +122,8 @@ ath10k: abstract htt_rx_desc structure
  		.hw_ops = &qca99x0_ops,
  		.decap_align_bytes = 1,
  		.spectral_bin_discard = 4,
-@@ -713,7 +698,6 @@ static const struct ath10k_hw_params ath
- 			.dir = WCN3990_HW_1_0_FW_DIR,
+@@ -716,7 +701,6 @@ static const struct ath10k_hw_params ath
+ 			.board_ext_size = WCN3990_BOARD_EXT_DATA_SZ,
  		},
  		.sw_decrypt_mcast_mgmt = true,
 -		.rx_desc_ops = &wcn3990_rx_desc_ops,
@@ -1555,7 +1555,7 @@ ath10k: abstract htt_rx_desc structure
  
 --- a/drivers/net/wireless/ath/ath10k/hw.h
 +++ b/drivers/net/wireless/ath/ath10k/hw.h
-@@ -510,8 +510,6 @@ struct ath10k_hw_clk_params {
+@@ -511,8 +511,6 @@ struct ath10k_hw_clk_params {
  	u32 outdiv;
  };
  
@@ -1564,7 +1564,7 @@ ath10k: abstract htt_rx_desc structure
  struct ath10k_hw_params {
  	u32 id;
  	u16 dev_id;
-@@ -565,9 +563,6 @@ struct ath10k_hw_params {
+@@ -566,9 +564,6 @@ struct ath10k_hw_params {
  	 */
  	bool sw_decrypt_mcast_mgmt;
  
@@ -1574,7 +1574,7 @@ ath10k: abstract htt_rx_desc structure
  	const struct ath10k_hw_ops *hw_ops;
  
  	/* Number of bytes used for alignment in rx_hdr_status of rx desc. */
-@@ -642,14 +637,16 @@ struct ath10k_hw_params {
+@@ -643,14 +638,16 @@ struct ath10k_hw_params {
  	bool delay_unmap_buffer;
  };
  
@@ -1592,7 +1592,7 @@ ath10k: abstract htt_rx_desc structure
  	int (*tx_data_rssi_pad_bytes)(struct htt_resp *htt);
  	int (*is_rssi_enable)(struct htt_resp *resp);
  };
-@@ -663,6 +660,24 @@ extern const struct ath10k_hw_ops wcn399
+@@ -664,6 +661,24 @@ extern const struct ath10k_hw_ops wcn399
  extern const struct ath10k_hw_clk_params qca6174_clk[];
  
  static inline int

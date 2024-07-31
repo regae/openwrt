@@ -1,6 +1,6 @@
 --- a/local-symbols
 +++ b/local-symbols
-@@ -166,6 +166,7 @@ ATH10K_THERMAL=
+@@ -158,6 +158,7 @@ ATH10K_THERMAL=
  ATH10K_LEDS=
  ATH10K_TRACING=
  ATH10K_DFS_CERTIFIED=
@@ -10,7 +10,7 @@
  ATH11K=
 --- a/drivers/net/wireless/ath/ath10k/Kconfig
 +++ b/drivers/net/wireless/ath/ath10k/Kconfig
-@@ -115,3 +115,10 @@ config ATH10K_DFS_CERTIFIED
+@@ -110,3 +110,10 @@ config ATH10K_DFS_CERTIFIED
  	help
  	This option enables DFS support for initiating radiation on
  	ath10k.
@@ -25,7 +25,7 @@
 +++ b/drivers/net/wireless/ath/ath10k/Makefile
 @@ -24,6 +24,7 @@ ath10k_core-$(CPTCFG_MAC80211_DEBUGFS) +
  ath10k_core-$(CONFIG_PM) += wow.o
- ath10k_core-$(CPTCFG_ATH10K_DEV_COREDUMP) += coredump.o
+ ath10k_core-$(CONFIG_DEV_COREDUMP) += coredump.o
  ath10k_core-$(CPTCFG_ATH10K_CE) += ce.o
 +ath10k_core-$(CPTCFG_ATH10K_SMART_ANTENNA) += debug_smart_ant.o
  
@@ -64,7 +64,7 @@
  
  static const struct ath10k_hw_params ath10k_hw_params_list[] = {
  	{
-@@ -2775,13 +2785,30 @@ static int ath10k_core_init_firmware_fea
+@@ -2671,13 +2681,30 @@ static int ath10k_core_init_firmware_fea
  	case ATH10K_FW_WMI_OP_VERSION_10_1:
  	case ATH10K_FW_WMI_OP_VERSION_10_2:
  	case ATH10K_FW_WMI_OP_VERSION_10_2_4:
@@ -100,7 +100,7 @@
  		ar->max_num_vdevs = TARGET_10X_NUM_VDEVS;
  		ar->htt.max_num_pending_tx = TARGET_10X_NUM_MSDU_DESC;
  		ar->fw_stats_req_mask = WMI_STAT_PEER;
-@@ -3739,6 +3766,9 @@ struct ath10k *ath10k_core_create(size_t
+@@ -3635,6 +3662,9 @@ struct ath10k *ath10k_core_create(size_t
  	init_completion(&ar->bss_survey_done);
  	init_completion(&ar->peer_delete_done);
  	init_completion(&ar->peer_stats_info_complete);
@@ -140,7 +140,7 @@
  struct ath10k {
  	struct ath_common ath_common;
  	struct ieee80211_hw *hw;
-@@ -1313,6 +1334,15 @@ struct ath10k {
+@@ -1316,6 +1337,15 @@ struct ath10k {
  	const char *led_default_trigger;
  #endif
  
@@ -156,7 +156,7 @@
  	/* must be last */
  	u8 drv_priv[] __aligned(sizeof(void *));
  };
-@@ -1329,6 +1359,29 @@ static inline bool ath10k_peer_stats_ena
+@@ -1332,6 +1362,29 @@ static inline bool ath10k_peer_stats_ena
  extern unsigned int ath10k_frame_mode;
  extern unsigned long ath10k_coredump_mask;
  
@@ -865,7 +865,7 @@
  	case HTT_T2H_MSG_TYPE_RX_FLUSH: {
 --- a/drivers/net/wireless/ath/ath10k/hw.h
 +++ b/drivers/net/wireless/ath/ath10k/hw.h
-@@ -737,10 +737,18 @@ ath10k_is_rssi_enable(struct ath10k_hw_p
+@@ -738,10 +738,18 @@ ath10k_is_rssi_enable(struct ath10k_hw_p
  #define TARGET_10X_AST_SKID_LIMIT		128
  #define TARGET_10X_NUM_STATIONS			128
  #define TARGET_10X_TX_STATS_NUM_STATIONS	118
@@ -884,7 +884,7 @@
  #define TARGET_10X_NUM_OFFLOAD_PEERS		0
  #define TARGET_10X_NUM_OFFLOAD_REORDER_BUFS	0
  #define TARGET_10X_NUM_PEER_KEYS		2
-@@ -749,6 +757,12 @@ ath10k_is_rssi_enable(struct ath10k_hw_p
+@@ -750,6 +758,12 @@ ath10k_is_rssi_enable(struct ath10k_hw_p
  						    (TARGET_10X_NUM_PEERS) * 2)
  #define TARGET_10X_TX_STATS_NUM_TIDS		min((TARGET_10X_NUM_TIDS_MAX), \
  						    (TARGET_10X_TX_STATS_NUM_PEERS) * 2)
@@ -897,7 +897,7 @@
  #define TARGET_10X_TX_CHAIN_MASK		(BIT(0) | BIT(1) | BIT(2))
  #define TARGET_10X_RX_CHAIN_MASK		(BIT(0) | BIT(1) | BIT(2))
  #define TARGET_10X_RX_TIMEOUT_LO_PRI		100
-@@ -769,6 +783,7 @@ ath10k_is_rssi_enable(struct ath10k_hw_p
+@@ -770,6 +784,7 @@ ath10k_is_rssi_enable(struct ath10k_hw_p
  
  /* 10.2 parameters */
  #define TARGET_10_2_DMA_BURST_SIZE		0
@@ -917,7 +917,7 @@
  
  /*********/
  /* Rates */
-@@ -5376,6 +5379,24 @@ static int ath10k_start(struct ieee80211
+@@ -5378,6 +5381,24 @@ static int ath10k_start(struct ieee80211
  		}
  	}
  
@@ -942,7 +942,7 @@
  	ar->num_started_vdevs = 0;
  	ath10k_regd_update(ar);
  
-@@ -5876,6 +5897,23 @@ static int ath10k_add_interface(struct i
+@@ -5878,6 +5899,23 @@ static int ath10k_add_interface(struct i
  				    arvif->vdev_id, ret);
  	}
  
@@ -966,7 +966,7 @@
  	if (vif->type == NL80211_IFTYPE_MONITOR) {
  		ar->monitor_arvif = arvif;
  		ret = ath10k_monitor_recalc(ar);
-@@ -5947,6 +5985,10 @@ static void ath10k_remove_interface(stru
+@@ -5949,6 +5987,10 @@ static void ath10k_remove_interface(stru
  
  	mutex_lock(&ar->conf_mutex);
  
@@ -977,7 +977,7 @@
  	ret = ath10k_spectral_vif_stop(arvif);
  	if (ret)
  		ath10k_warn(ar, "failed to stop spectral for vdev %i: %d\n",
-@@ -7703,10 +7745,45 @@ static int ath10k_sta_state(struct ieee8
+@@ -7705,10 +7747,45 @@ static int ath10k_sta_state(struct ieee8
  		ath10k_dbg(ar, ATH10K_DBG_STA, "mac sta %pM associated\n",
  			   sta->addr);
  
@@ -1024,7 +1024,7 @@
  	} else if (old_state == IEEE80211_STA_ASSOC &&
  		   new_state == IEEE80211_STA_AUTHORIZED &&
  		   sta->tdls) {
-@@ -7739,6 +7816,10 @@ static int ath10k_sta_state(struct ieee8
+@@ -7741,6 +7818,10 @@ static int ath10k_sta_state(struct ieee8
  		ath10k_dbg(ar, ATH10K_DBG_STA, "mac sta %pM disassociated\n",
  			   sta->addr);
  
@@ -1645,7 +1645,7 @@
  };
  
  static struct wmi_pdev_param_map wmi_10_4_pdev_param_map = {
-@@ -5579,6 +5614,13 @@ static void ath10k_wmi_event_service_rea
+@@ -5599,6 +5634,13 @@ static void ath10k_wmi_event_service_rea
  		return;
  	}
  
@@ -1659,7 +1659,7 @@
  	if (test_bit(WMI_SERVICE_PEER_CACHING, ar->wmi.svc_map)) {
  		if (test_bit(ATH10K_FW_FEATURE_PEER_FLOW_CONTROL,
  			     ar->running_fw->fw_file.fw_features))
-@@ -5845,6 +5887,59 @@ static inline void ath10k_wmi_queue_set_
+@@ -5865,6 +5907,59 @@ static inline void ath10k_wmi_queue_set_
  	}
  }
  
@@ -1719,7 +1719,7 @@
  static void ath10k_wmi_op_rx(struct ath10k *ar, struct sk_buff *skb)
  {
  	struct wmi_cmd_hdr *cmd_hdr;
-@@ -6230,9 +6325,13 @@ static void ath10k_wmi_10_2_op_rx(struct
+@@ -6250,9 +6345,13 @@ static void ath10k_wmi_10_2_op_rx(struct
  	case WMI_10_2_PDEV_BSS_CHAN_INFO_EVENTID:
  		ath10k_wmi_event_pdev_bss_chan_info(ar, skb);
  		break;
@@ -1734,7 +1734,7 @@
  	case WMI_10_2_GENERIC_BUFFER_EVENTID:
  	case WMI_10_2_MCAST_BUF_RELEASE_EVENTID:
  	case WMI_10_2_MCAST_LIST_AGEOUT_EVENTID:
-@@ -6700,12 +6799,34 @@ static struct sk_buff *ath10k_wmi_10_2_o
+@@ -6720,12 +6819,34 @@ static struct sk_buff *ath10k_wmi_10_2_o
  	config.num_vdevs = __cpu_to_le32(TARGET_10X_NUM_VDEVS);
  	config.num_peer_keys = __cpu_to_le32(TARGET_10X_NUM_PEER_KEYS);
  
@@ -1774,7 +1774,7 @@
  	}
  
  	config.ast_skid_limit = __cpu_to_le32(TARGET_10X_AST_SKID_LIMIT);
-@@ -6768,6 +6889,13 @@ static struct sk_buff *ath10k_wmi_10_2_o
+@@ -6788,6 +6909,13 @@ static struct sk_buff *ath10k_wmi_10_2_o
  
  	cmd->resource_config.feature_mask = __cpu_to_le32(features);
  
@@ -1788,7 +1788,7 @@
  	memcpy(&cmd->resource_config.common, &config, sizeof(config));
  	ath10k_wmi_put_host_mem_chunks(ar, &cmd->mem_chunks);
  
-@@ -7872,7 +8000,18 @@ ath10k_wmi_op_gen_beacon_dma(struct ath1
+@@ -7892,7 +8020,18 @@ ath10k_wmi_op_gen_beacon_dma(struct ath1
  	cmd->msdu_id = 0;
  	cmd->frame_control = __cpu_to_le32(fc);
  	cmd->flags = 0;
@@ -1808,7 +1808,7 @@
  
  	if (dtim_zero)
  		cmd->flags |= __cpu_to_le32(WMI_BCN_TX_REF_FLAG_DTIM_ZERO);
-@@ -9141,6 +9280,252 @@ ath10k_wmi_10_2_4_op_gen_bb_timing(struc
+@@ -9161,6 +9300,252 @@ ath10k_wmi_10_2_4_op_gen_bb_timing(struc
  	return skb;
  }
  
@@ -2061,7 +2061,7 @@
  static const struct wmi_ops wmi_ops = {
  	.rx = ath10k_wmi_op_rx,
  	.map_svc = wmi_main_svc_map,
-@@ -9211,6 +9596,13 @@ static const struct wmi_ops wmi_ops = {
+@@ -9231,6 +9616,13 @@ static const struct wmi_ops wmi_ops = {
  	/* .gen_p2p_go_bcn_ie not implemented */
  	/* .gen_adaptive_qcs not implemented */
  	/* .gen_pdev_enable_adaptive_cca not implemented */
@@ -2075,7 +2075,7 @@
  };
  
  static const struct wmi_ops wmi_10_1_ops = {
-@@ -9283,6 +9675,13 @@ static const struct wmi_ops wmi_10_1_ops
+@@ -9303,6 +9695,13 @@ static const struct wmi_ops wmi_10_1_ops
  	/* .gen_p2p_go_bcn_ie not implemented */
  	/* .gen_adaptive_qcs not implemented */
  	/* .gen_pdev_enable_adaptive_cca not implemented */
@@ -2089,7 +2089,7 @@
  };
  
  static const struct wmi_ops wmi_10_2_ops = {
-@@ -9353,6 +9752,17 @@ static const struct wmi_ops wmi_10_2_ops
+@@ -9373,6 +9772,17 @@ static const struct wmi_ops wmi_10_2_ops
  	.gen_gpio_config = ath10k_wmi_op_gen_gpio_config,
  	.gen_gpio_output = ath10k_wmi_op_gen_gpio_output,
  	/* .gen_pdev_enable_adaptive_cca not implemented */
@@ -2107,7 +2107,7 @@
  };
  
  static const struct wmi_ops wmi_10_2_4_ops = {
-@@ -9429,6 +9839,17 @@ static const struct wmi_ops wmi_10_2_4_o
+@@ -9449,6 +9859,17 @@ static const struct wmi_ops wmi_10_2_4_o
  	/* .gen_prb_tmpl not implemented */
  	/* .gen_p2p_go_bcn_ie not implemented */
  	/* .gen_adaptive_qcs not implemented */

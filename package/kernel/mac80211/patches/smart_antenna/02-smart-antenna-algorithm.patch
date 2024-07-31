@@ -1,6 +1,6 @@
 --- a/local-symbols
 +++ b/local-symbols
-@@ -167,6 +167,7 @@ ATH10K_LEDS=
+@@ -159,6 +159,7 @@ ATH10K_LEDS=
  ATH10K_TRACING=
  ATH10K_DFS_CERTIFIED=
  ATH10K_SMART_ANTENNA=
@@ -10,7 +10,7 @@
  ATH11K=
 --- a/drivers/net/wireless/ath/ath10k/Kconfig
 +++ b/drivers/net/wireless/ath/ath10k/Kconfig
-@@ -122,3 +122,10 @@ config ATH10K_SMART_ANTENNA
+@@ -117,3 +117,10 @@ config ATH10K_SMART_ANTENNA
  	default n
  	---help---
  	This option enables Smart Antenna API support.
@@ -24,7 +24,7 @@
 --- a/drivers/net/wireless/ath/ath10k/Makefile
 +++ b/drivers/net/wireless/ath/ath10k/Makefile
 @@ -25,6 +25,7 @@ ath10k_core-$(CONFIG_PM) += wow.o
- ath10k_core-$(CPTCFG_ATH10K_DEV_COREDUMP) += coredump.o
+ ath10k_core-$(CONFIG_DEV_COREDUMP) += coredump.o
  ath10k_core-$(CPTCFG_ATH10K_CE) += ce.o
  ath10k_core-$(CPTCFG_ATH10K_SMART_ANTENNA) += debug_smart_ant.o
 +ath10k_core-$(CPTCFG_ATH10K_SMART_ANT_ALG) += smart_ant.o
@@ -234,7 +234,7 @@
  #endif
 --- a/drivers/net/wireless/ath/ath10k/mac.c
 +++ b/drivers/net/wireless/ath/ath10k/mac.c
-@@ -5191,6 +5191,7 @@ static int ath10k_start(struct ieee80211
+@@ -5193,6 +5193,7 @@ static int ath10k_start(struct ieee80211
  {
  	struct ath10k *ar = hw->priv;
  	u32 param;
@@ -242,7 +242,7 @@
  	int ret = 0;
  	struct wmi_bb_timing_cfg_arg bb_timing = {0};
  
-@@ -5380,13 +5381,13 @@ static int ath10k_start(struct ieee80211
+@@ -5382,13 +5383,13 @@ static int ath10k_start(struct ieee80211
  	}
  
  	if (test_bit(WMI_SERVICE_SMART_ANTENNA_HW_SUPPORT, ar->wmi.svc_map)) {
@@ -3143,7 +3143,7 @@
  }
 --- a/drivers/net/wireless/ath/ath10k/wmi.c
 +++ b/drivers/net/wireless/ath/ath10k/wmi.c
-@@ -8001,13 +8001,13 @@ ath10k_wmi_op_gen_beacon_dma(struct ath1
+@@ -8021,13 +8021,13 @@ ath10k_wmi_op_gen_beacon_dma(struct ath1
  	cmd->frame_control = __cpu_to_le32(fc);
  	cmd->flags = 0;
  	if (test_bit(WMI_SERVICE_SMART_ANTENNA_HW_SUPPORT, ar->wmi.svc_map)) {
@@ -3159,7 +3159,7 @@
  		}
  	} else {
  		cmd->antenna_mask = __cpu_to_le32(WMI_BCN_TX_REF_DEF_ANTENNA);
-@@ -9377,30 +9377,6 @@ ath10k_wmi_op_gen_pdev_enable_smart_ant(
+@@ -9397,30 +9397,6 @@ ath10k_wmi_op_gen_pdev_enable_smart_ant(
  	return skb;
  }
  
@@ -3190,7 +3190,7 @@
  /* Set tx antenna for a particular peer. Tx antennas is an array
   * containing antennas for every rate fallback retry. After this
   * antenna configuration all the frames to that particular peer
-@@ -9597,7 +9573,6 @@ static const struct wmi_ops wmi_ops = {
+@@ -9617,7 +9593,6 @@ static const struct wmi_ops wmi_ops = {
  	/* .gen_adaptive_qcs not implemented */
  	/* .gen_pdev_enable_adaptive_cca not implemented */
  	/* .gen_pdev_enable_smart_ant not implemented */
@@ -3198,7 +3198,7 @@
  	/* .gen_peer_set_smart_tx_ant not implemented */
  	/* .gen_pdev_set_rx_ant not implemented */
  	/* .gen_peer_cfg_smart_ant_fb not implemented */
-@@ -9676,7 +9651,6 @@ static const struct wmi_ops wmi_10_1_ops
+@@ -9696,7 +9671,6 @@ static const struct wmi_ops wmi_10_1_ops
  	/* .gen_adaptive_qcs not implemented */
  	/* .gen_pdev_enable_adaptive_cca not implemented */
  	/* .gen_pdev_enable_smart_ant not implemented */
@@ -3206,7 +3206,7 @@
  	/* .gen_peer_set_smart_tx_ant not implemented */
  	/* .gen_pdev_set_rx_ant not implemented */
  	/* .gen_peer_cfg_smart_ant_fb not implemented */
-@@ -9754,7 +9728,6 @@ static const struct wmi_ops wmi_10_2_ops
+@@ -9774,7 +9748,6 @@ static const struct wmi_ops wmi_10_2_ops
  	/* .gen_pdev_enable_adaptive_cca not implemented */
  #ifdef CPTCFG_ATH10K_SMART_ANTENNA
  	.gen_pdev_enable_smart_ant  = ath10k_wmi_op_gen_pdev_enable_smart_ant,
@@ -3214,7 +3214,7 @@
  	.gen_peer_set_smart_tx_ant = ath10k_wmi_op_gen_peer_set_smart_tx_ant,
  	.gen_pdev_set_rx_ant = ath10k_wmi_op_gen_pdev_set_rx_ant,
  	.gen_peer_cfg_smart_ant_fb = ath10k_wmi_op_gen_peer_cfg_smart_ant,
-@@ -9841,7 +9814,6 @@ static const struct wmi_ops wmi_10_2_4_o
+@@ -9861,7 +9834,6 @@ static const struct wmi_ops wmi_10_2_4_o
  	/* .gen_adaptive_qcs not implemented */
  #ifdef CPTCFG_ATH10K_SMART_ANTENNA
  	.gen_pdev_enable_smart_ant  = ath10k_wmi_op_gen_pdev_enable_smart_ant,
