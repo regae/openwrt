@@ -1,0 +1,66 @@
+--- a/drivers/net/wireless/ath/ath10k/mac.c
++++ b/drivers/net/wireless/ath/ath10k/mac.c
+@@ -5039,6 +5039,8 @@ static void ath10k_mac_setup_ht_vht_cap(
+ 	if (ar->phy_capability & WHAL_WLAN_11G_CAPABILITY) {
+ 		band = &ar->mac.sbands[NL80211_BAND_2GHZ];
+ 		band->ht_cap = ht_cap;
++		band->vht_cap = vht_cap;
++		band->vht_cap.vendor_qam256_supported = true;
+ 	}
+ 	if (ar->phy_capability & WHAL_WLAN_11A_CAPABILITY) {
+ 		band = &ar->mac.sbands[NL80211_BAND_5GHZ];
+--- a/include/net/cfg80211.h
++++ b/include/net/cfg80211.h
+@@ -346,11 +346,13 @@ struct ieee80211_sta_ht_cap {
+  * to describe 802.11ac VHT capabilities for an STA.
+  *
+  * @vht_supported: is VHT supported by the STA
++ * @qam256_supported: is QAM256 supported by the STA
+  * @cap: VHT capabilities map as described in 802.11ac spec
+  * @vht_mcs: Supported VHT MCS rates
+  */
+ struct ieee80211_sta_vht_cap {
+ 	bool vht_supported;
++	bool vendor_qam256_supported;
+ 	u32 cap; /* use IEEE80211_VHT_CAP_ */
+ 	struct ieee80211_vht_mcs_info vht_mcs;
+ };
+--- a/net/mac80211/mlme.c
++++ b/net/mac80211/mlme.c
+@@ -4856,6 +4856,10 @@ static int ieee80211_prep_channel(struct
+ 		break;
+ 	}
+ 
++	/* Some Vendor supports non-standard QAM-256 on 2.4GHz 802.11n */
++	if (sband->vht_cap.vendor_qam256_supported)
++		have_80mhz = true;
++
+ 	if (!have_80mhz) {
+ 		sdata_info(sdata, "80 MHz not supported, disabling VHT\n");
+ 		*conn_flags |= IEEE80211_CONN_DISABLE_VHT;
+--- a/net/mac80211/util.c
++++ b/net/mac80211/util.c
+@@ -1978,6 +1978,10 @@ static int ieee80211_build_preq_ies_band
+ 		break;
+ 	}
+ 
++	/* Some Vendor supports non-standard QAM-256 on 2.4GHz 802.11n */
++	if (sband->vht_cap.vendor_qam256_supported)
++		have_80mhz = true;
++
+ 	if (sband->vht_cap.vht_supported && have_80mhz) {
+ 		if (end - pos < 2 + sizeof(struct ieee80211_vht_cap))
+ 			goto out_err;
+--- a/net/mac80211/vht.c
++++ b/net/mac80211/vht.c
+@@ -144,6 +144,10 @@ ieee80211_vht_cap_ie_to_sta_vht_cap(stru
+ 		break;
+ 	}
+ 
++	/* Some Vendor supports non-standard QAM-256 on 2.4GHz 802.11n */
++	if (sband->vht_cap.vendor_qam256_supported)
++		have_80mhz = true;
++
+ 	if (!have_80mhz)
+ 		return;
+ 
