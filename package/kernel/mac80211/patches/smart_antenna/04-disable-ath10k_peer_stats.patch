@@ -1,0 +1,11 @@
+--- a/drivers/net/wireless/ath/ath10k/core.c
++++ b/drivers/net/wireless/ath/ath10k/core.c
+@@ -3474,7 +3474,7 @@ static void ath10k_core_register_work(st
+ 	int status;
+ 
+ 	/* peer stats are enabled by default */
+-	set_bit(ATH10K_FLAG_PEER_STATS, &ar->dev_flags);
++	//set_bit(ATH10K_FLAG_PEER_STATS, &ar->dev_flags);
+ 
+ 	status = ath10k_core_probe_fw(ar);
+ 	if (status) {
